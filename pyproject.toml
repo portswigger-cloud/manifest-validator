@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling>=1.27.0", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "manifest-validator"
+version = "0.1.0"
+description = "Validation service for generated Kubernetes manifest trees."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.14"
+dependencies = [
+  "click",
+  "httpx",
+  "hypercorn",
+  "kubernetes",
+  "pyjwt[crypto]",
+  "pyyaml",
+  "starlette",
+]
+
+[dependency-groups]
+dev = [
+  "httpx2>=2.4.0",
+  "pytest",
+  "ty",
+  "ruff",
+  "bktools",
+]
+
+[[tool.uv.index]]
+url = "https://repo.noa.re/"
+
+[project.scripts]
+manifest-validator = "manifest_validator.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/manifest_validator"]
+
+[tool.ruff.lint]
+# Pinned so a developer's user-level ruff config cannot disagree with CI.
+select = ["E4", "E7", "E9", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]

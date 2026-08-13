@@ -1,0 +1,13 @@
+# In-process checks only, so this runs outside a cluster.
+bind-address = "127.0.0.1:8080"
+disable-auth = true
+
+[[check]]
+name = "structural"
+kind = "structural"
+
+[[check]]
+name = "image-policy"
+kind = "image-policy"
+allowed-registries = ["public.ecr.aws/"]
+require-pinned = true

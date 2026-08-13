@@ -1,0 +1,51 @@
+bind-address = "0.0.0.0:8080"
+
+[jobs]
+namespace = "manifest-validator"
+timeout-seconds = 600
+max-concurrent = 4
+# Where a Job fetches the tree from. Must be reachable in-cluster.
+tree-base-url = "http://manifest-validator.manifest-validator.svc.cluster.local:8080"
+# Unpacks the tree into /tree before the tool container starts. Needs sh, curl and tar.
+fetcher-image = "public.ecr.aws/docker/library/alpine:3.22"
+# Audience of the projected token each Job presents to the tree endpoint.
+token-audience = "manifest-validator"
+
+# Cheap, deterministic and in-process: every document parses and carries
+# apiVersion, kind and metadata.name.
+[[check]]
+name = "structural"
+kind = "structural"
+
+# The first rule with teeth. In-process for the same reason.
+[[check]]
+name = "image-policy"
+kind = "image-policy"
+allowed-registries = ["public.ecr.aws/"]
+require-pinned = true
+
+# Tools run in their own Job, with their own privileges. KICS needs neither
+# egress nor a credential, so it gets neither.
+[[check]]
+name = "kics"
+kind = "job"
+image = "docker.io/checkmarx/kics:v2.1.16"
+args = ["scan", "--path", "/tree", "--report-formats", "json", "--output-path", "/dev/stdout"]
+tool-version = "v2.1.16"
+ruleset-digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+findings-format = "kics"
+allow-egress = false
+
+# Callers name checks; they never describe them. Nothing in a request can
+# choose an image to execute.
+[[role]]
+name = "relcoord"
+issuer = "https://oidc.eks.eu-west-1.amazonaws.com/id/B88E7287E54DB073AC9CDC2FD1BE0969"
+audience = "manifest-validator"
+claims = { sub = "system:serviceaccount:relcoord:default" }
+
+[[role]]
+name = "check-job"
+issuer = "https://oidc.eks.eu-west-1.amazonaws.com/id/B88E7287E54DB073AC9CDC2FD1BE0969"
+audience = "manifest-validator"
+claims = { sub = "system:serviceaccount:manifest-validator:default" }
