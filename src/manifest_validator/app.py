@@ -2,8 +2,6 @@
 # SPDX-FileCopyrightText: 2026 PortSwigger Ltd
 from __future__ import annotations
 
-import base64
-import binascii
 import json
 import logging
 import queue
@@ -20,12 +18,13 @@ from starlette.routing import Route
 from manifest_validator.auth import AuthError, TokenValidator, extract_bearer_token
 from manifest_validator.errors import (
     DigestMismatch,
+    MalformedTree,
     UnknownCheck,
     UnknownTree,
 )
 from manifest_validator.models import ValidationResult
 from manifest_validator.service import ValidationService
-from manifest_validator.trees import TreeStore, to_tar
+from manifest_validator.trees import TreeStore, from_tar_gz, to_tar
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +61,9 @@ def create_app(
             return JSONResponse({"error": str(exc)}, status_code=401)
 
         try:
-            payload = await request.json()
-            digest, files, checks = _parse_validate_request(payload)
-        except (ValueError, json.JSONDecodeError) as exc:
+            digest, checks = _parse_validate_params(request)
+            files = from_tar_gz(await request.body())
+        except (ValueError, MalformedTree) as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
 
         logger.info(
@@ -119,33 +118,13 @@ def create_app(
     )
 
 
-def _parse_validate_request(
-    payload: Any,
-) -> tuple[str, dict[str, bytes], tuple[str, ...] | None]:
-    if not isinstance(payload, dict):
-        raise ValueError("body must be a JSON object")
-    digest = payload.get("digest")
-    if not isinstance(digest, str) or not digest.startswith("sha256:"):
-        raise ValueError("digest must be a string of the form 'sha256:...'")
-    raw_files = payload.get("files")
-    if not isinstance(raw_files, dict) or not raw_files:
-        raise ValueError("files must be a non-empty object of path to base64 content")
-    files: dict[str, bytes] = {}
-    for path, encoded in raw_files.items():
-        if not isinstance(path, str) or not isinstance(encoded, str):
-            raise ValueError("files keys and values must be strings")
-        if path.startswith("/") or ".." in path.split("/"):
-            raise ValueError(f"file path {path!r} must be relative and without '..'")
-        try:
-            files[path] = base64.b64decode(encoded, validate=True)
-        except (binascii.Error, ValueError) as exc:
-            raise ValueError(f"file {path!r} is not valid base64: {exc}") from None
-    checks = payload.get("checks")
-    if checks is None:
-        return digest, files, None
-    if not isinstance(checks, list) or not all(isinstance(c, str) for c in checks):
-        raise ValueError("checks must be a list of strings")
-    return digest, files, tuple(checks)
+def _parse_validate_params(request: Request) -> tuple[str, tuple[str, ...] | None]:
+    """The body is the tree itself, so everything else travels in the query."""
+    digest = request.query_params.get("digest")
+    if not digest or not digest.startswith("sha256:"):
+        raise ValueError("digest query parameter must be of the form 'sha256:...'")
+    checks = tuple(request.query_params.getlist("check"))
+    return digest, checks or None
 
 
 def _discard_progress(phase: str, message: str) -> None:

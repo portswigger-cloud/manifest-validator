@@ -2,10 +2,10 @@
 # SPDX-FileCopyrightText: 2026 PortSwigger Ltd
 from __future__ import annotations
 
-import base64
 import io
 import json
 import tarfile
+from typing import Any
 
 import pytest
 from starlette.testclient import TestClient
@@ -31,13 +31,39 @@ def client(store: InMemoryTreeStore) -> TestClient:
     return TestClient(create_app(service, store, None))
 
 
-def _body(files: dict[str, bytes], digest: str | None = None) -> dict[str, object]:
-    return {
-        "digest": digest if digest is not None else compute_digest(files),
-        "files": {
-            path: base64.b64encode(content).decode() for path, content in files.items()
-        },
-    }
+def _blob(files: dict[str, bytes]) -> bytes:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for path, content in files.items():
+            info = tarfile.TarInfo(name=path)
+            info.size = len(content)
+            archive.addfile(info, io.BytesIO(content))
+    return buffer.getvalue()
+
+
+def _params(
+    files: dict[str, bytes], digest: str | None, checks: list[str] | None
+) -> list[tuple[str, Any]]:
+    params: list[tuple[str, Any]] = [
+        ("digest", digest if digest is not None else compute_digest(files))
+    ]
+    return params + [("check", check) for check in (checks or [])]
+
+
+def _post(
+    client: TestClient,
+    files: dict[str, bytes],
+    *,
+    digest: str | None = None,
+    checks: list[str] | None = None,
+    body: bytes | None = None,
+) -> Any:
+    return client.post(
+        "/v1/validate",
+        content=_blob(files) if body is None else body,
+        params=_params(files, digest, checks),
+        headers={"content-type": "application/gzip"},
+    )
 
 
 def test_healthz(client: TestClient) -> None:
@@ -45,7 +71,7 @@ def test_healthz(client: TestClient) -> None:
 
 
 def test_validate_returns_a_green_verdict(client: TestClient) -> None:
-    response = client.post("/v1/validate", json=_body({"a.yaml": GOOD}))
+    response = _post(client, {"a.yaml": GOOD})
     assert response.status_code == 200
     payload = response.json()
     assert payload["passed"] is True
@@ -54,54 +80,69 @@ def test_validate_returns_a_green_verdict(client: TestClient) -> None:
 
 
 def test_validate_returns_findings_on_a_red_verdict(client: TestClient) -> None:
-    payload = client.post("/v1/validate", json=_body({"a.yaml": BAD})).json()
+    payload = _post(client, {"a.yaml": BAD}).json()
     assert payload["passed"] is False
     rule_ids = {f["rule_id"] for f in payload["verdicts"][0]["findings"]}
     assert "structural/missing-apiversion" in rule_ids
 
 
+def test_the_digest_is_of_the_content_not_the_blob(client: TestClient) -> None:
+    """Two separately built blobs of one tree share a digest."""
+    files = {"a.yaml": GOOD}
+    for body in (_blob(files), _blob({"a.yaml": GOOD})):
+        response = _post(client, files, body=body)
+        assert response.status_code == 200
+        assert response.json()["digest"] == compute_digest(files)
+
+
 def test_validate_rejects_a_digest_mismatch(client: TestClient) -> None:
-    body = _body({"a.yaml": GOOD}, digest="sha256:" + "0" * 64)
-    response = client.post("/v1/validate", json=body)
+    response = _post(client, {"a.yaml": GOOD}, digest="sha256:" + "0" * 64)
     assert response.status_code == 400
     assert "digest mismatch" in response.json()["error"]
 
 
+def test_validate_requires_a_digest(client: TestClient) -> None:
+    response = client.post(
+        "/v1/validate",
+        content=_blob({"a.yaml": GOOD}),
+        headers={"content-type": "application/gzip"},
+    )
+    assert response.status_code == 400
+    assert "digest" in response.json()["error"]
+
+
 def test_validate_rejects_an_unknown_check(client: TestClient) -> None:
-    body = _body({"a.yaml": GOOD}) | {"checks": ["kics"]}
-    response = client.post("/v1/validate", json=body)
+    response = _post(client, {"a.yaml": GOOD}, checks=["kics"])
     assert response.status_code == 400
     assert "unknown check" in response.json()["error"]
 
 
-def test_validate_rejects_a_non_base64_file(client: TestClient) -> None:
-    body = {"digest": "sha256:" + "0" * 64, "files": {"a.yaml": "not base64!"}}
-    assert client.post("/v1/validate", json=body).status_code == 400
+def test_validate_rejects_a_body_that_is_not_a_gzipped_tar(client: TestClient) -> None:
+    response = _post(client, {"a.yaml": GOOD}, body=b"not a gzip at all")
+    assert response.status_code == 400
+    assert "gzipped tar" in response.json()["error"]
 
 
-def test_validate_rejects_an_absolute_path(client: TestClient) -> None:
-    body = _body({"a.yaml": GOOD})
-    body["files"] = {"/etc/passwd": base64.b64encode(GOOD).decode()}
-    response = client.post("/v1/validate", json=body)
+def test_validate_rejects_an_empty_archive(client: TestClient) -> None:
+    response = _post(client, {"a.yaml": GOOD}, body=_blob({}))
+    assert response.status_code == 400
+    assert "no files" in response.json()["error"]
+
+
+def test_validate_rejects_a_traversing_member(client: TestClient) -> None:
+    response = _post(client, {"a.yaml": GOOD}, body=_blob({"../escape.yaml": GOOD}))
     assert response.status_code == 400
     assert "relative" in response.json()["error"]
 
 
-def test_validate_rejects_a_traversing_path(client: TestClient) -> None:
-    body = _body({"a.yaml": GOOD})
-    body["files"] = {"../escape.yaml": base64.b64encode(GOOD).decode()}
-    assert client.post("/v1/validate", json=body).status_code == 400
-
-
-def test_validate_rejects_an_empty_file_set(client: TestClient) -> None:
-    body = {"digest": "sha256:" + "0" * 64, "files": {}}
-    assert client.post("/v1/validate", json=body).status_code == 400
-
-
 def test_validate_streams_progress_then_a_result(client: TestClient) -> None:
-    body = _body({"a.yaml": GOOD})
+    files = {"a.yaml": GOOD}
     with client.stream(
-        "POST", "/v1/validate", json=body, headers={"accept": "text/event-stream"}
+        "POST",
+        "/v1/validate",
+        content=_blob(files),
+        params=_params(files, None, None),
+        headers={"accept": "text/event-stream", "content-type": "application/gzip"},
     ) as response:
         assert response.status_code == 200
         events = _parse_sse("".join(response.iter_text()))
@@ -112,9 +153,13 @@ def test_validate_streams_progress_then_a_result(client: TestClient) -> None:
 
 
 def test_stream_reports_a_digest_mismatch_as_an_error_event(client: TestClient) -> None:
-    body = _body({"a.yaml": GOOD}, digest="sha256:" + "0" * 64)
+    files = {"a.yaml": GOOD}
     with client.stream(
-        "POST", "/v1/validate", json=body, headers={"accept": "text/event-stream"}
+        "POST",
+        "/v1/validate",
+        content=_blob(files),
+        params=_params(files, "sha256:" + "0" * 64, None),
+        headers={"accept": "text/event-stream", "content-type": "application/gzip"},
     ) as response:
         events = _parse_sse("".join(response.iter_text()))
     assert events[-1][0] == "error"
@@ -151,7 +196,7 @@ def test_a_job_can_pull_the_tree_while_its_check_runs(store: InMemoryTreeStore) 
 
     service = ValidationService({"puller": PullingChecker()}, store)
     client = TestClient(create_app(service, store, None))
-    assert client.post("/v1/validate", json=_body({"a.yaml": GOOD})).json()["passed"]
+    assert _post(client, {"a.yaml": GOOD}).json()["passed"]
     assert pulled == [["a.yaml"]]
 
 

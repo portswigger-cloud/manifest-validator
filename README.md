@@ -39,17 +39,29 @@ endpoint that produced it.
 
 ### `POST /v1/validate`
 
-```json
-{
-  "digest": "sha256:…",
-  "files": {"platform-dev/relcoord/deployment-relcoord.yaml": "<base64>"},
-  "checks": ["structural", "image-policy"]
-}
+The body **is** the tree: a gzipped tar, `Content-Type: application/gzip`.
+Everything else travels in the query string, because the body has no room for
+it.
+
+```
+POST /v1/validate?digest=sha256:…&check=structural&check=image-policy
+Content-Type: application/gzip
+
+<gzipped tar of the generated tree>
 ```
 
-`files` maps a relative path to base64-encoded content. Absolute paths and `..`
-segments are rejected. `checks` is optional and defaults to every check
-configured with `default = true`.
+`check` may be repeated and defaults to every check configured with
+`default = true`.
+
+The archive is expanded in memory and every member is checked before it is read:
+regular files and directories only, no symlinks or devices, no absolute paths, no
+`..` in any component, and hard caps on file count and total expanded size — a
+small blob must not be able to expand without bound. Any of those is a 400.
+
+Note that the digest is over the *content*, not the blob, so two separately
+built archives of the same tree produce the same digest. gzip is not
+deterministic, and a verdict keyed on compressed bytes would never hit its
+cache.
 
 The response aggregates one verdict per check:
 

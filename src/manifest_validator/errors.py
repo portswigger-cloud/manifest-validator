@@ -11,6 +11,10 @@ class DigestMismatch(ManifestValidatorError):
     pass
 
 
+class MalformedTree(ManifestValidatorError):
+    pass
+
+
 class UnknownTree(ManifestValidatorError):
     pass
 
