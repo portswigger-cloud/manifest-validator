@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 import json
+import pathlib
+import tomllib
 
-from manifest_validator.jobs import JobChecker, JobOutcome, JobSpec
+from manifest_validator.jobs import (
+    JobChecker,
+    JobOutcome,
+    JobSpec,
+    KubernetesJobRunner,
+)
 from manifest_validator.models import Tree
 
 DIGEST = "sha256:" + "a" * 64
@@ -23,6 +30,18 @@ class StubRunner:
     def run(self, spec: JobSpec, progress: object) -> JobOutcome:
         self.specs.append(spec)
         return self._outcome
+
+
+def _spec() -> JobSpec:
+    return JobSpec(
+        name="check-kics-abc",
+        image="ghcr.io/portswigger-cloud/checkmarx/kics:v2.1.16",
+        args=("scan",),
+        tree_url="http://validator:8080/v1/trees/sha256:abc",
+        timeout_seconds=600,
+        fetcher_image="public.ecr.aws/docker/library/alpine:3.22",
+        token_audience="manifest-validator",
+    )
 
 
 def _checker(runner: StubRunner, **kwargs: object) -> JobChecker:
@@ -112,3 +131,30 @@ def test_egress_is_denied_by_default() -> None:
     _checker(runner).run(DIGEST, TREE, _noop)
     assert runner.specs[0].allow_egress is False
     assert runner.specs[0].service_account is None
+
+
+def test_images_are_reused_from_the_node_cache() -> None:
+    """Always would re-pull on every validation, and pulls are the slow part."""
+    runner = StubRunner(JobOutcome(exit_code=0, logs=""))
+    manifest = KubernetesJobRunner(
+        "manifest-validator", batch_api=None, core_api=None
+    )._manifest(_spec())
+    pod = manifest["spec"]["template"]["spec"]
+    policies = [c["imagePullPolicy"] for c in pod["initContainers"] + pod["containers"]]
+    assert policies == ["IfNotPresent", "IfNotPresent"]
+    assert runner.specs == []
+
+
+def test_no_check_image_comes_from_docker_hub() -> None:
+    """docker.io is rate-limited per source IP and the cluster shares one NAT."""
+    example = (
+        pathlib.Path(__file__).resolve().parents[1] / "manifest-validator.toml.example"
+    )
+    with example.open("rb") as handle:
+        data = tomllib.load(handle)
+    images = [c["image"] for c in data["check"] if "image" in c]
+    images.append(data["jobs"]["fetcher-image"])
+    assert images
+    for image in images:
+        assert not image.startswith("docker.io/"), image
+        assert "/" in image.split(":")[0], f"{image} has no registry host"

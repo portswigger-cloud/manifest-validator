@@ -92,6 +92,7 @@ class KubernetesJobRunner:
                 {
                     "name": "check",
                     "image": spec.image,
+                    "imagePullPolicy": "IfNotPresent",
                     "args": list(spec.args),
                     "env": env,
                     "volumeMounts": [{"name": "tree", "mountPath": TREE_MOUNT}],
@@ -167,6 +168,7 @@ class KubernetesJobRunner:
         return {
             "name": "fetch-tree",
             "image": spec.fetcher_image,
+            "imagePullPolicy": "IfNotPresent",
             "command": ["/bin/sh", "-c", script],
             "env": [{"name": "TREE_URL", "value": spec.tree_url}],
             "volumeMounts": [

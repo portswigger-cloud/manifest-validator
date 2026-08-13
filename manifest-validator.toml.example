@@ -26,10 +26,14 @@ require-pinned = true
 
 # Tools run in their own Job, with their own privileges. KICS needs neither
 # egress nor a credential, so it gets neither.
+#
+# Not docker.io/checkmarx/kics: Checkmarx is not a Docker Verified Publisher, so
+# pulls count against the anonymous per-IP limit, and every node in the cluster
+# leaves through one NAT instance. Mirrored via portswigger-cloud/docker-sync.
 [[check]]
 name = "kics"
 kind = "job"
-image = "docker.io/checkmarx/kics:v2.1.16"
+image = "ghcr.io/portswigger-cloud/checkmarx/kics:v2.1.16"
 args = ["scan", "--path", "/tree", "--report-formats", "json", "--output-path", "/dev/stdout"]
 tool-version = "v2.1.16"
 ruleset-digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
