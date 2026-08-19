@@ -27,12 +27,8 @@ class CommandRunner(Protocol):
 
 
 class SubprocessRunner:
-    """Runs a tool as a child process of this service.
-
-    The tool gets the process's own privileges, which is the trade this service
-    makes: no scanner here needs egress or a credential, so isolating one in its
-    own pod bought nothing but a Job to schedule and an image to pull.
-    """
+    """A tool runs with this service's privileges, which is only acceptable
+    while every tool is offline and unauthenticated."""
 
     def run(
         self, argv: tuple[str, ...], cwd: Path, timeout_seconds: int
@@ -59,12 +55,8 @@ class SubprocessRunner:
 
 
 def write_tree(tree: Tree, destination: Path) -> None:
-    """Materialise a tree on disk for a tool that reads files.
-
-    `from_tar_gz` already rejects absolute and traversing paths, but this is
-    where a bad path would become a write outside the workspace, so it is
-    checked again here rather than trusted from a caller.
-    """
+    """`from_tar_gz` rejects these paths already, but this is where one would
+    become a write outside the workspace, so it is not taken on trust."""
     root = destination.resolve()
     for path, content in tree.files.items():
         target = (root / path).resolve()

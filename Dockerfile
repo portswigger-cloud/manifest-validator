@@ -13,13 +13,9 @@ RUN uv build --wheel
 ENV VIRTUAL_ENV=/venv
 RUN uv venv /venv && uv pip install --no-deps dist/*.whl
 
-# Straight from Docker Hub, as `github-actions/actions/kics-scan` already does.
 # Checkmarx is not a Verified Publisher, so anonymous pulls count against the
-# per-IP limit — authenticate the build with DOCKER_TOKEN, the way the existing
-# scan workflow does, rather than relying on the allowance.
-#
-# v2.1.20 is the newest tag Checkmarx publishes an image for; the v2.1.21 GitHub
-# release has no image.
+# per-IP limit; authenticate with DOCKER_TOKEN as the kics-scan action does.
+# v2.1.20 is the newest tag with an image — the v2.1.21 release has none.
 FROM checkmarx/kics:v2.1.20 AS kics
 
 FROM gcr.io/distroless/cc-debian13
@@ -28,16 +24,13 @@ COPY --from=builder /python /python
 COPY --from=builder /deps-venv /venv
 COPY --from=builder /venv /venv
 
-# The scanner runs as a child of this process rather than in its own Job, so it
-# ships in this image. The query library is most of the size and is what
-# `--queries-path` must point at.
+# Paths are constants in kics.py; changing them here changes them there.
 COPY --from=kics /app/bin/kics /usr/local/bin/kics
 COPY --from=kics /app/bin/assets /opt/kics/assets
 
 EXPOSE 8080
 USER nonroot
-# A check materialises the tree under TMPDIR. Set explicitly so that adding
-# readOnlyRootFilesystem later is a matter of mounting a volume here, rather
-# than discovering where the scanner decided to write.
+# Explicit so readOnlyRootFilesystem later means mounting a volume here, rather
+# than discovering where the scanner chose to write.
 ENV TMPDIR=/tmp
 ENTRYPOINT ["/venv/bin/manifest-validator"]

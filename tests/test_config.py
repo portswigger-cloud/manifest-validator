@@ -58,7 +58,6 @@ def test_unknown_severities_are_rejected() -> None:
 
 
 def test_excluding_every_severity_is_rejected() -> None:
-    """A check that can never fail is a green verdict that checked nothing."""
     data = {
         "check": [
             {

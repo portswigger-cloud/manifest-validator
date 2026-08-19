@@ -16,9 +16,9 @@ from manifest_validator.models import Finding, Severity, Tree, Verdict
 
 logger = logging.getLogger(__name__)
 
-# Where the Dockerfile puts the scanner. These belong to the image, not to a
-# deployment, so they are not configurable: a config repository that could move
-# them could point the scan at a query set inside the tree being scanned.
+# Not configurable: the tree is the working directory, and the config lives in
+# the repository that generates the tree, so a movable queries path would let a
+# tree supply the queries used to scan it.
 BINARY = "kics"
 QUERIES_PATH = "/opt/kics/assets/queries"
 LIBRARIES_PATH = "/opt/kics/assets/libraries"
@@ -28,15 +28,6 @@ REPORT_NAME = "results.json"
 
 @dataclass(frozen=True)
 class KicsChecker:
-    """Runs KICS over the tree and reports what it found.
-
-    Configuration carries the two things that are decisions — which platform
-    types to scan and which severities to ignore. Everything else in the
-    command line is either fixed by the image or is the contract with the
-    report reader below, so exposing it would only offer ways to break the
-    check.
-    """
-
     check_name: str
     runner: CommandRunner
     types: tuple[str, ...] = ()
@@ -69,11 +60,8 @@ class KicsChecker:
         )
 
     def _argv(self, output_dir: Path) -> tuple[str, ...]:
-        """`--path .` because the tree is the working directory.
-
-        An absolute path here would put the temporary workspace into every
-        finding's location, and from there into a pull request.
-        """
+        # `--path .`, not the absolute path: KICS reports locations relative to
+        # its working directory, and those reach a pull request.
         argv = [
             BINARY,
             "scan",
@@ -96,8 +84,6 @@ class KicsChecker:
         return tuple(argv)
 
     def _ruleset_digest(self, report: dict[str, Any] | None) -> str:
-        """What decided the findings: the tool version and what it was told to
-        look at. Two verdicts with the same digest are comparable."""
         digest = hashlib.sha256()
         for part in (
             _version(report),
@@ -110,7 +96,6 @@ class KicsChecker:
 
 
 def _version(report: dict[str, Any] | None) -> str:
-    """The version that produced the report, not one config asserted."""
     if report is None:
         return "unknown"
     version = report.get("kics_version")
@@ -142,7 +127,6 @@ def _findings(
                 )
             )
     if not findings and exit_code != 0:
-        # Otherwise this would be a red verdict with nothing to explain it.
         findings.append(
             Finding(
                 rule_id=f"{check_name}/non-zero-exit",
@@ -154,11 +138,6 @@ def _findings(
 
 
 def _read_report(path: Path) -> dict[str, Any] | None:
-    """Read the report file rather than scraping output.
-
-    A report is pretty-printed over many lines, so nothing useful can be
-    recovered from stdout line by line.
-    """
     try:
         payload = json.loads(path.read_text())
     except OSError, json.JSONDecodeError:

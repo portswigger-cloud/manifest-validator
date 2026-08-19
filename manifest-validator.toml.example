@@ -19,21 +19,11 @@ kind = "image-policy"
 allowed-registries = ["public.ecr.aws/"]
 require-pinned = true
 
-# KICS runs as a child process of this service, over the tree written to a
-# temporary directory. The binary and its query library ship in this image, so
-# their paths are not configurable — a config repository that could move them
-# could point the scan at a query set inside the tree being scanned.
-#
-# Only the decisions live here. The rest of the command line is either fixed by
-# the image or is the contract with the report reader, and exposing it would
-# offer nothing but ways to break the check.
 [[check]]
 name = "kics"
 kind = "kics"
-# Platform query sets to run. A generated manifest tree holds neither
-# CloudFormation nor Dockerfiles, and each type costs scan time for no findings.
+# A generated manifest tree holds neither CloudFormation nor Dockerfiles, and
+# each type costs scan time for no findings.
 types = ["Kubernetes", "Crossplane"]
-# Only critical and high are reported. Excluding every severity is a config
-# error: a check that cannot fail is a green verdict that checked nothing.
 exclude-severities = ["medium", "low", "info"]
 timeout-seconds = 600

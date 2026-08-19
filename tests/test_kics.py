@@ -26,8 +26,6 @@ def _flag(argv: tuple[str, ...], name: str) -> str | None:
 
 
 class StubRunner:
-    """Writes a report where the checker told KICS to put one, then reports."""
-
     def __init__(
         self, exit_code: int = 0, report: dict[str, Any] | None = None
     ) -> None:
@@ -67,7 +65,6 @@ HIGH = {
 
 
 def test_the_tree_is_the_working_directory() -> None:
-    """KICS reports locations relative to its cwd, and those reach a PR."""
     runner = StubRunner(report=_report())
     _checker(runner).run(DIGEST, TREE, _noop)
     assert _flag(runner.argv, "--path") == "."
@@ -95,7 +92,6 @@ def test_the_workspace_is_removed_after_the_check() -> None:
 
 
 def test_config_chooses_types_and_exclusions_and_nothing_else() -> None:
-    """The rest of the command line is the image's, or the parser's contract."""
     runner = StubRunner(report=_report())
     _checker(
         runner,
@@ -131,7 +127,6 @@ def test_findings_are_read_from_the_report() -> None:
 
 
 def test_the_version_is_the_one_that_produced_the_report() -> None:
-    """Not one config asserted, which could disagree with the image."""
     runner = StubRunner(report=_report(kics_version="v9.9.9"))
     assert _checker(runner).run(DIGEST, TREE, _noop).tool_version == "v9.9.9"
 
@@ -157,7 +152,6 @@ def test_an_unreadable_report_fails_rather_than_passing_silently() -> None:
 
 
 def test_a_non_zero_exit_with_no_findings_still_explains_itself() -> None:
-    """Otherwise this would be a red verdict with nothing in it."""
     verdict = _checker(StubRunner(exit_code=126, report=_report())).run(
         DIGEST, TREE, _noop
     )
