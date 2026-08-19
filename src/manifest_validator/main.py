@@ -40,6 +40,7 @@ def _build_checker(check: CheckConfig) -> Checker:
         types=check.types,
         exclude_severities=check.exclude_severities,
         timeout_seconds=check.timeout_seconds,
+        exceptions=check.exceptions,
     )
 
 

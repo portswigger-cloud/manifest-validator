@@ -16,6 +16,53 @@ KICS_SEVERITIES = ("critical", "high", "medium", "low", "info")
 
 
 @dataclass(frozen=True)
+class PolicyException:
+    """One KICS finding, or one class of them, that does not fail a verdict.
+
+    Keyed on provenance rather than on a count: `source` is the release that
+    produced the file, as recorded in the manifest's `# Source:` header, so an
+    exception survives a chart upgrade but cannot spread to another release.
+    `similarity_id` is the escape hatch for a genuine one-off.
+
+    A bare `source` is refused. Accepting every query from a release would
+    inherit the defect the thresholds have — a widening nobody reads.
+    """
+
+    reason: str
+    source: str | None = None
+    query: str | None = None
+    similarity_id: str | None = None
+
+    def describe(self) -> str:
+        if self.similarity_id:
+            return f"similarity-id {self.similarity_id}"
+        return f"{self.query} in {self.source}"
+
+    @classmethod
+    def from_mapping(cls, check_name: str, data: dict[str, Any]) -> PolicyException:
+        where = f"check.{check_name}.exception"
+        reason = data.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError(f"{where}.reason must be a non-empty string")
+        source = _optional_string(data, "source", where)
+        query = _optional_string(data, "query", where)
+        similarity_id = _optional_string(data, "similarity-id", where)
+        if similarity_id:
+            if source or query:
+                raise ValueError(
+                    f"{where} sets similarity-id together with source/query; a "
+                    "similarity-id already identifies a single finding"
+                )
+        elif not (source and query):
+            raise ValueError(
+                f"{where} must set either similarity-id, or both source and query"
+            )
+        return cls(
+            reason=reason, source=source, query=query, similarity_id=similarity_id
+        )
+
+
+@dataclass(frozen=True)
 class CheckConfig:
     """A check the service is willing to run.
 
@@ -32,6 +79,7 @@ class CheckConfig:
     allowed_registries: tuple[str, ...] = ()
     require_pinned: bool = True
     default: bool = True
+    exceptions: tuple[PolicyException, ...] = ()
 
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> CheckConfig:
@@ -58,6 +106,16 @@ class CheckConfig:
         timeout_seconds = _int(data, "timeout-seconds", cls.timeout_seconds)
         if timeout_seconds <= 0:
             raise ValueError(f"check.{name}.timeout-seconds must be positive")
+        raw_exceptions = data.get("exception", [])
+        if not isinstance(raw_exceptions, list):
+            raise ValueError(f"check.{name}.exception must be a list of tables")
+        if raw_exceptions and kind != "kics":
+            raise ValueError(
+                f"check.{name}.exception is only meaningful for a 'kics' check"
+            )
+        exceptions = tuple(
+            PolicyException.from_mapping(name, entry) for entry in raw_exceptions
+        )
         return cls(
             name=name,
             kind=kind,
@@ -67,6 +125,7 @@ class CheckConfig:
             allowed_registries=_string_tuple(data, "allowed-registries"),
             require_pinned=_bool(data, "require-pinned", cls.require_pinned),
             default=_bool(data, "default", cls.default),
+            exceptions=exceptions,
         )
 
 
@@ -125,6 +184,15 @@ def _bool(data: dict[str, Any], key: str, default: bool) -> bool:
     value = data.get(key, default)
     if not isinstance(value, bool):
         raise ValueError(f"{key} must be a boolean")
+    return value
+
+
+def _optional_string(data: dict[str, Any], key: str, where: str) -> str | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{where}.{key} must be a non-empty string")
     return value
 
 

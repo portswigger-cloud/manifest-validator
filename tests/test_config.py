@@ -98,3 +98,61 @@ def test_max_concurrent_must_be_positive() -> None:
     data = dict(MINIMAL) | {"max-concurrent": 0}
     with pytest.raises(ValueError, match="max-concurrent"):
         Settings.from_mapping(data)
+
+
+def _kics(*exceptions: dict[str, str]) -> dict[str, object]:
+    return {
+        "check": [
+            {"name": "kics", "kind": "kics", "exception": list(exceptions)},
+        ]
+    }
+
+
+def test_an_exception_is_read_onto_the_check() -> None:
+    settings = Settings.from_mapping(
+        _kics({"source": "crossplane", "query": "RBAC Wildcard In Rule", "reason": "r"})
+    )
+    exception = settings.checks[0].exceptions[0]
+    assert (exception.source, exception.query, exception.reason) == (
+        "crossplane",
+        "RBAC Wildcard In Rule",
+        "r",
+    )
+
+
+def test_an_exception_must_say_why() -> None:
+    with pytest.raises(ValueError, match="reason"):
+        Settings.from_mapping(_kics({"source": "crossplane", "query": "q"}))
+
+
+def test_a_bare_source_is_refused() -> None:
+    """Accepting a whole release would repeat the thresholds' defect."""
+    with pytest.raises(ValueError, match="both source and query"):
+        Settings.from_mapping(_kics({"source": "crossplane", "reason": "r"}))
+
+
+def test_a_bare_query_is_refused() -> None:
+    with pytest.raises(ValueError, match="both source and query"):
+        Settings.from_mapping(_kics({"query": "RBAC Wildcard In Rule", "reason": "r"}))
+
+
+def test_a_similarity_id_stands_alone() -> None:
+    with pytest.raises(ValueError, match="already identifies a single finding"):
+        Settings.from_mapping(
+            _kics({"similarity-id": "abc", "source": "x", "query": "q", "reason": "r"})
+        )
+
+
+def test_exceptions_are_meaningless_on_a_non_kics_check() -> None:
+    with pytest.raises(ValueError, match="only meaningful"):
+        Settings.from_mapping(
+            {
+                "check": [
+                    {
+                        "name": "structural",
+                        "kind": "structural",
+                        "exception": [{"similarity-id": "abc", "reason": "r"}],
+                    }
+                ]
+            }
+        )
