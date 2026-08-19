@@ -19,29 +19,21 @@ kind = "image-policy"
 allowed-registries = ["public.ecr.aws/"]
 require-pinned = true
 
-# Tools run as a child process of this service, with a tree written to a
-# temporary directory as their working directory. `{tree}` and `{output}` are
-# substituted before exec; nothing else is interpreted and no shell is involved.
+# KICS runs as a child process of this service, over the tree written to a
+# temporary directory. The binary and its query library ship in this image, so
+# their paths are not configurable — a config repository that could move them
+# could point the scan at a query set inside the tree being scanned.
 #
-# `--path .` rather than `{tree}`: KICS reports finding locations relative to
-# its own working directory, and an absolute path here puts the temporary
-# workspace into every finding, and from there into a pull request.
-#
-# The binary must be in this image. KICS needs neither egress nor a credential,
-# so running it here rather than in its own Job costs nothing in privilege and
-# saves a Job, an image pull and a tree served over HTTP.
+# Only the decisions live here. The rest of the command line is either fixed by
+# the image or is the contract with the report reader, and exposing it would
+# offer nothing but ways to break the check.
 [[check]]
 name = "kics"
-kind = "command"
-command = [
-  "kics", "scan",
-  "--path", ".",
-  "--queries-path", "/opt/kics/assets/queries",
-  "--libraries-path", "/opt/kics/assets/libraries",
-  "--report-formats", "json",
-  "--output-path", "{output}",
-]
-tool-version = "v2.1.20"
-ruleset-digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-findings-format = "kics"
+kind = "kics"
+# Platform query sets to run. A generated manifest tree holds neither
+# CloudFormation nor Dockerfiles, and each type costs scan time for no findings.
+types = ["Kubernetes", "Crossplane"]
+# Only critical and high are reported. Excluding every severity is a config
+# error: a check that cannot fail is a green verdict that checked nothing.
+exclude-severities = ["medium", "low", "info"]
 timeout-seconds = 600

@@ -39,11 +39,13 @@ need a `system` PR, a regeneration, an Argo sync and a pod restart.
 - `checks.py` — the `Checker` protocol plus the two in-process checks,
   `StructuralChecker` and `ImagePolicyChecker`. A checker decides its own
   `passed`; the service aggregates and never recomputes it from findings.
-- `commands.py` — `CommandChecker` runs a tool as a child process via a
-  `CommandRunner`, over a tree written to a temporary directory. `{tree}` and
-  `{output}` are substituted before exec and no shell is involved. The tool
-  therefore has this service's privileges: acceptable only while every tool is
-  offline and unauthenticated, as KICS is.
+- `commands.py` — the `CommandRunner` seam, `SubprocessRunner`, and writing a
+  tree to a workspace. Generic; knows nothing about any tool.
+- `kics.py` — `KicsChecker` builds the command line and reads the report. Paths
+  and output wiring are constants here because they ship with the image, and
+  config that could move them could point the scan at a query set inside the
+  tree being scanned. The tool runs with this service's privileges: acceptable
+  only while every tool is offline and unauthenticated, as KICS is.
 - `service.py` — verifies the claimed digest, checks `VerdictCache`, runs the
   checks, aggregates. A check that raises fails closed with a `check-error`
   finding.
