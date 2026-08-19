@@ -19,29 +19,11 @@ kind = "image-policy"
 allowed-registries = ["public.ecr.aws/"]
 require-pinned = true
 
-# Tools run as a child process of this service, with a tree written to a
-# temporary directory as their working directory. `{tree}` and `{output}` are
-# substituted before exec; nothing else is interpreted and no shell is involved.
-#
-# `--path .` rather than `{tree}`: KICS reports finding locations relative to
-# its own working directory, and an absolute path here puts the temporary
-# workspace into every finding, and from there into a pull request.
-#
-# The binary must be in this image. KICS needs neither egress nor a credential,
-# so running it here rather than in its own Job costs nothing in privilege and
-# saves a Job, an image pull and a tree served over HTTP.
 [[check]]
 name = "kics"
-kind = "command"
-command = [
-  "kics", "scan",
-  "--path", ".",
-  "--queries-path", "/opt/kics/assets/queries",
-  "--libraries-path", "/opt/kics/assets/libraries",
-  "--report-formats", "json",
-  "--output-path", "{output}",
-]
-tool-version = "v2.1.20"
-ruleset-digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-findings-format = "kics"
+kind = "kics"
+# A generated manifest tree holds neither CloudFormation nor Dockerfiles, and
+# each type costs scan time for no findings.
+types = ["Kubernetes", "Crossplane"]
+exclude-severities = ["medium", "low", "info"]
 timeout-seconds = 600

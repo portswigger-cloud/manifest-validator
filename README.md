@@ -147,10 +147,11 @@ Three kinds, all behind one `Checker` seam:
   tag other than `latest`, and come from an allowed registry. Finds `image:`
   anywhere in a document, including in custom resources this service does not
   model.
-- `command` — runs a tool as a child process, over a tree written to a
-  temporary directory. `{tree}` and `{output}` are substituted into the command
-  line before exec; there is no shell, so nothing else is interpreted. The
-  binary ships in this image.
+- `kics` — runs KICS as a child process, over a tree written to a temporary
+  directory, with no shell. The binary, its query library and the report wiring
+  are fixed by this image; config chooses only the platform types to scan and
+  the severities to ignore. `tool_version` is read from the report KICS wrote,
+  so a verdict cannot name a version that did not produce it.
 
 A check that raises fails closed and reports a `check-error` finding. A `kics`
 check whose output cannot be parsed fails rather than passing: a green verdict
@@ -172,9 +173,8 @@ already does. Checkmarx is not a Verified Publisher, so anonymous pulls count
 against the per-IP limit; that workflow passes a `DOCKER_TOKEN` and this build
 should too.
 
-The version in the `Dockerfile` and `tool-version` in the config are the same
-fact written twice. A verdict that names the wrong version is worse than one
-that names none.
+The `Dockerfile` pin is the only place the version is stated. A verdict reports
+what the report says ran, so the two cannot disagree.
 
 ## Development
 

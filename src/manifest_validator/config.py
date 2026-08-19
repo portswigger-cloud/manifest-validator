@@ -10,7 +10,9 @@ from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
-CheckKind = Literal["structural", "image-policy", "command"]
+CheckKind = Literal["structural", "image-policy", "kics"]
+
+KICS_SEVERITIES = ("critical", "high", "medium", "low", "info")
 
 
 @dataclass(frozen=True)
@@ -24,10 +26,8 @@ class CheckConfig:
 
     name: str
     kind: CheckKind
-    command: tuple[str, ...] = ()
-    tool_version: str = "unknown"
-    ruleset_digest: str = "unknown"
-    findings_format: str = "exit-code"
+    types: tuple[str, ...] = ()
+    exclude_severities: tuple[str, ...] = ()
     timeout_seconds: int = 600
     allowed_registries: tuple[str, ...] = ()
     require_pinned: bool = True
@@ -39,23 +39,30 @@ class CheckConfig:
         if not isinstance(name, str) or not name.strip():
             raise ValueError("check.name must be a non-empty string")
         kind = data.get("kind")
-        if kind not in ("structural", "image-policy", "command"):
+        if kind not in ("structural", "image-policy", "kics"):
             raise ValueError(
-                f"check.{name}.kind must be 'structural', 'image-policy' or 'command'"
+                f"check.{name}.kind must be 'structural', 'image-policy' or 'kics'"
             )
-        command = _string_tuple(data, "command")
-        if kind == "command" and not command:
-            raise ValueError(f"check.{name}.command is required when kind = 'command'")
+        exclude_severities = _string_tuple(data, "exclude-severities")
+        unknown = [s for s in exclude_severities if s not in KICS_SEVERITIES]
+        if unknown:
+            raise ValueError(
+                f"check.{name}.exclude-severities has unknown severities "
+                f"{sorted(unknown)}; expected some of {list(KICS_SEVERITIES)}"
+            )
+        if set(exclude_severities) == set(KICS_SEVERITIES):
+            raise ValueError(
+                f"check.{name}.exclude-severities excludes every severity, so the "
+                "check could never fail"
+            )
         timeout_seconds = _int(data, "timeout-seconds", cls.timeout_seconds)
         if timeout_seconds <= 0:
             raise ValueError(f"check.{name}.timeout-seconds must be positive")
         return cls(
             name=name,
             kind=kind,
-            command=command,
-            tool_version=_string(data, "tool-version", cls.tool_version),
-            ruleset_digest=_string(data, "ruleset-digest", cls.ruleset_digest),
-            findings_format=_string(data, "findings-format", cls.findings_format),
+            types=_string_tuple(data, "types"),
+            exclude_severities=exclude_severities,
             timeout_seconds=timeout_seconds,
             allowed_registries=_string_tuple(data, "allowed-registries"),
             require_pinned=_bool(data, "require-pinned", cls.require_pinned),

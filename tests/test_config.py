@@ -22,7 +22,7 @@ def test_the_example_documents_every_check_kind() -> None:
     with EXAMPLE.open("rb") as handle:
         data = tomllib.load(handle)
     kinds = {check["kind"] for check in data["check"]}
-    assert kinds == {"structural", "image-policy", "command"}
+    assert kinds == {"structural", "image-policy", "kics"}
 
 
 def test_defaults_apply() -> None:
@@ -47,9 +47,27 @@ def test_duplicate_check_names_are_rejected() -> None:
         Settings.from_mapping(data)
 
 
-def test_a_command_check_must_name_a_command() -> None:
-    data = {"check": [{"name": "kics", "kind": "command"}]}
-    with pytest.raises(ValueError, match="command is required"):
+def test_unknown_severities_are_rejected() -> None:
+    data = {
+        "check": [
+            {"name": "kics", "kind": "kics", "exclude-severities": ["medium", "spicy"]}
+        ]
+    }
+    with pytest.raises(ValueError, match="unknown severities"):
+        Settings.from_mapping(data)
+
+
+def test_excluding_every_severity_is_rejected() -> None:
+    data = {
+        "check": [
+            {
+                "name": "kics",
+                "kind": "kics",
+                "exclude-severities": ["critical", "high", "medium", "low", "info"],
+            }
+        ]
+    }
+    with pytest.raises(ValueError, match="could never fail"):
         Settings.from_mapping(data)
 
 
@@ -63,7 +81,7 @@ def test_non_default_checks_are_excluded_from_the_default_set() -> None:
     data = {
         "check": [
             {"name": "structural", "kind": "structural"},
-            {"name": "wiz", "kind": "command", "command": ["wiz"], "default": False},
+            {"name": "wiz", "kind": "kics", "default": False},
         ],
     }
     settings = Settings.from_mapping(data)
@@ -71,11 +89,7 @@ def test_non_default_checks_are_excluded_from_the_default_set() -> None:
 
 
 def test_timeout_must_be_positive() -> None:
-    data = {
-        "check": [
-            {"name": "k", "kind": "command", "command": ["k"], "timeout-seconds": 0}
-        ]
-    }
+    data = {"check": [{"name": "k", "kind": "kics", "timeout-seconds": 0}]}
     with pytest.raises(ValueError, match="timeout-seconds"):
         Settings.from_mapping(data)
 
