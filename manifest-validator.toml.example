@@ -1,15 +1,10 @@
+# There is no authentication here. Who may reach this service is a
+# NetworkPolicy question; see README. Callers name checks and never describe
+# them, so no request can choose a command to execute.
 bind-address = "0.0.0.0:8080"
 
-[jobs]
-namespace = "manifest-validator"
-timeout-seconds = 600
+# How many validations may run at once.
 max-concurrent = 4
-# Where a Job fetches the tree from. Must be reachable in-cluster.
-tree-base-url = "http://manifest-validator.manifest-validator.svc.cluster.local:8080"
-# Unpacks the tree into /tree before the tool container starts. Needs sh, curl and tar.
-fetcher-image = "public.ecr.aws/docker/library/alpine:3.22"
-# Audience of the projected token each Job presents to the tree endpoint.
-token-audience = "manifest-validator"
 
 # Cheap, deterministic and in-process: every document parses and carries
 # apiVersion, kind and metadata.name.
@@ -24,32 +19,29 @@ kind = "image-policy"
 allowed-registries = ["public.ecr.aws/"]
 require-pinned = true
 
-# Tools run in their own Job, with their own privileges. KICS needs neither
-# egress nor a credential, so it gets neither.
+# Tools run as a child process of this service, with a tree written to a
+# temporary directory as their working directory. `{tree}` and `{output}` are
+# substituted before exec; nothing else is interpreted and no shell is involved.
 #
-# Not docker.io/checkmarx/kics: Checkmarx is not a Docker Verified Publisher, so
-# pulls count against the anonymous per-IP limit, and every node in the cluster
-# leaves through one NAT instance. Mirrored via portswigger-cloud/docker-sync.
+# `--path .` rather than `{tree}`: KICS reports finding locations relative to
+# its own working directory, and an absolute path here puts the temporary
+# workspace into every finding, and from there into a pull request.
+#
+# The binary must be in this image. KICS needs neither egress nor a credential,
+# so running it here rather than in its own Job costs nothing in privilege and
+# saves a Job, an image pull and a tree served over HTTP.
 [[check]]
 name = "kics"
-kind = "job"
-image = "ghcr.io/portswigger-cloud/checkmarx/kics:v2.1.16"
-args = ["scan", "--path", "/tree", "--report-formats", "json", "--output-path", "/dev/stdout"]
-tool-version = "v2.1.16"
+kind = "command"
+command = [
+  "kics", "scan",
+  "--path", ".",
+  "--queries-path", "/opt/kics/assets/queries",
+  "--libraries-path", "/opt/kics/assets/libraries",
+  "--report-formats", "json",
+  "--output-path", "{output}",
+]
+tool-version = "v2.1.20"
 ruleset-digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 findings-format = "kics"
-allow-egress = false
-
-# Callers name checks; they never describe them. Nothing in a request can
-# choose an image to execute.
-[[role]]
-name = "relcoord"
-issuer = "https://oidc.eks.eu-west-1.amazonaws.com/id/B88E7287E54DB073AC9CDC2FD1BE0969"
-audience = "manifest-validator"
-claims = { sub = "system:serviceaccount:relcoord:default" }
-
-[[role]]
-name = "check-job"
-issuer = "https://oidc.eks.eu-west-1.amazonaws.com/id/B88E7287E54DB073AC9CDC2FD1BE0969"
-audience = "manifest-validator"
-claims = { sub = "system:serviceaccount:manifest-validator:default" }
+timeout-seconds = 600

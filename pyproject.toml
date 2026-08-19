@@ -12,16 +12,14 @@ license-files = ["LICENSE"]
 requires-python = ">=3.14"
 dependencies = [
   "click",
-  "httpx",
   "hypercorn",
-  "kubernetes",
-  "pyjwt[crypto]",
   "pyyaml",
   "starlette",
 ]
 
 [dependency-groups]
 dev = [
+  "httpx",
   "httpx2>=2.4.0",
   "pytest",
   "ty",

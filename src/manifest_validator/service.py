@@ -9,7 +9,7 @@ from collections.abc import Mapping, Sequence
 from manifest_validator.checks import Checker, ProgressSink
 from manifest_validator.errors import UnknownCheck
 from manifest_validator.models import Finding, Tree, ValidationResult, Verdict
-from manifest_validator.trees import TreeStore, verify_digest
+from manifest_validator.trees import verify_digest
 
 logger = logging.getLogger(__name__)
 
@@ -49,14 +49,12 @@ class ValidationService:
     def __init__(
         self,
         checkers: Mapping[str, Checker],
-        tree_store: TreeStore,
         *,
         cache: VerdictCache | None = None,
         max_concurrent: int = 4,
         default_checks: Sequence[str] | None = None,
     ) -> None:
         self._checkers = dict(checkers)
-        self._tree_store = tree_store
         self._cache = cache if cache is not None else VerdictCache()
         self._slots = threading.BoundedSemaphore(max_concurrent)
         self._default_checks = tuple(default_checks or sorted(self._checkers))
@@ -85,15 +83,11 @@ class ValidationService:
             return ValidationResult(digest=digest, verdicts=cached, cached=True)
 
         tree = Tree(files=dict(files))
-        self._tree_store.put(digest, tree)
         progress("validate", f"{len(tree)} files, checks: {', '.join(requested)}")
-        try:
-            with self._slots:
-                verdicts = tuple(
-                    self._run_one(name, digest, tree, progress) for name in requested
-                )
-        finally:
-            self._tree_store.discard(digest)
+        with self._slots:
+            verdicts = tuple(
+                self._run_one(name, digest, tree, progress) for name in requested
+            )
 
         self._cache.put(digest, cache_key, verdicts)
         result = ValidationResult(digest=digest, verdicts=verdicts)

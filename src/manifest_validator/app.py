@@ -15,16 +15,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
-from manifest_validator.auth import AuthError, TokenValidator, extract_bearer_token
-from manifest_validator.errors import (
-    DigestMismatch,
-    MalformedTree,
-    UnknownCheck,
-    UnknownTree,
-)
+from manifest_validator.errors import DigestMismatch, MalformedTree, UnknownCheck
 from manifest_validator.models import ValidationResult
 from manifest_validator.service import ValidationService
-from manifest_validator.trees import TreeStore, from_tar_gz, to_tar
+from manifest_validator.trees import from_tar_gz
 
 logger = logging.getLogger(__name__)
 
@@ -32,34 +26,18 @@ SSE_MEDIA_TYPE = "text/event-stream"
 _SENTINEL = object()
 
 
-def create_app(
-    service: ValidationService,
-    tree_store: TreeStore,
-    token_validator: TokenValidator | None,
-) -> Starlette:
+def create_app(service: ValidationService) -> Starlette:
     """Wire the HTTP surface.
 
-    `token_validator` of None disables authentication and is for local runs
-    only; `main` refuses to do it unless asked explicitly.
+    Callers are not authenticated here. Reachability is the NetworkPolicy's
+    job: only relcoord may POST. Nothing on this surface is safe to expose
+    beyond that.
     """
-
-    def authenticate(request: Request) -> str:
-        if token_validator is None:
-            return "auth-disabled"
-        claims = token_validator.validate(
-            extract_bearer_token(request.headers.get("authorization"))
-        )
-        return claims.role
 
     async def healthz(request: Request) -> Response:
         return JSONResponse({"status": "ok"})
 
     async def validate(request: Request) -> Response:
-        try:
-            role = authenticate(request)
-        except AuthError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=401)
-
         try:
             digest, checks = _parse_validate_params(request)
             files = from_tar_gz(await request.body())
@@ -67,10 +45,9 @@ def create_app(
             return JSONResponse({"error": str(exc)}, status_code=400)
 
         logger.info(
-            "validate digest=%s files=%d role=%s checks=%s",
+            "validate digest=%s files=%d checks=%s",
             digest,
             len(files),
-            role,
             checks or "default",
         )
 
@@ -93,27 +70,10 @@ def create_app(
             return JSONResponse({"error": f"unknown check: {exc}"}, status_code=400)
         return JSONResponse(result.as_dict())
 
-    async def get_tree(request: Request) -> Response:
-        try:
-            authenticate(request)
-        except AuthError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=401)
-        digest = request.path_params["digest"]
-        try:
-            tree = tree_store.get(digest)
-        except UnknownTree:
-            return JSONResponse({"error": "no such tree"}, status_code=404)
-        return Response(
-            content=to_tar(tree),
-            media_type="application/x-tar",
-            headers={"Cache-Control": "no-store"},
-        )
-
     return Starlette(
         routes=[
             Route("/healthz", healthz, methods=["GET"]),
             Route("/v1/validate", validate, methods=["POST"]),
-            Route("/v1/trees/{digest}", get_tree, methods=["GET"]),
         ]
     )
 

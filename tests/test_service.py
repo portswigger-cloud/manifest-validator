@@ -8,7 +8,7 @@ from manifest_validator.checks import ProgressSink
 from manifest_validator.errors import DigestMismatch, UnknownCheck
 from manifest_validator.models import Finding, Tree, Verdict
 from manifest_validator.service import ValidationService
-from manifest_validator.trees import InMemoryTreeStore, compute_digest
+from manifest_validator.trees import compute_digest
 
 FILES = {"a.yaml": b"apiVersion: v1\nkind: Namespace\nmetadata:\n  name: a\n"}
 
@@ -51,10 +51,9 @@ class ExplodingChecker:
         raise RuntimeError("kaboom")
 
 
-def _service(*checkers: object) -> tuple[ValidationService, InMemoryTreeStore]:
-    store = InMemoryTreeStore()
+def _service(*checkers: object) -> ValidationService:
     mapping = {c.name: c for c in checkers}  # ty: ignore
-    return ValidationService(mapping, store), store  # ty: ignore
+    return ValidationService(mapping)  # ty: ignore
 
 
 def _events() -> tuple[list[tuple[str, str]], ProgressSink]:
@@ -67,7 +66,7 @@ def _events() -> tuple[list[tuple[str, str]], ProgressSink]:
 
 
 def test_passes_when_every_check_passes() -> None:
-    service, _ = _service(StubChecker("one"), StubChecker("two"))
+    service = _service(StubChecker("one"), StubChecker("two"))
     _, sink = _events()
     result = service.validate(compute_digest(FILES), FILES, sink)
     assert result.passed
@@ -75,20 +74,20 @@ def test_passes_when_every_check_passes() -> None:
 
 
 def test_fails_when_any_check_fails() -> None:
-    service, _ = _service(StubChecker("one"), StubChecker("two", passed=False))
+    service = _service(StubChecker("one"), StubChecker("two", passed=False))
     _, sink = _events()
     assert not service.validate(compute_digest(FILES), FILES, sink).passed
 
 
 def test_rejects_a_claimed_digest_that_does_not_match_the_bytes() -> None:
-    service, _ = _service(StubChecker("one"))
+    service = _service(StubChecker("one"))
     _, sink = _events()
     with pytest.raises(DigestMismatch):
         service.validate("sha256:" + "0" * 64, FILES, sink)
 
 
 def test_rejects_an_unknown_check_name() -> None:
-    service, _ = _service(StubChecker("one"))
+    service = _service(StubChecker("one"))
     _, sink = _events()
     with pytest.raises(UnknownCheck):
         service.validate(compute_digest(FILES), FILES, sink, ["nope"])
@@ -96,7 +95,7 @@ def test_rejects_an_unknown_check_name() -> None:
 
 def test_identical_content_is_not_rescanned() -> None:
     checker = StubChecker("one")
-    service, _ = _service(checker)
+    service = _service(checker)
     _, sink = _events()
     digest = compute_digest(FILES)
     service.validate(digest, FILES, sink)
@@ -107,7 +106,7 @@ def test_identical_content_is_not_rescanned() -> None:
 
 def test_a_different_check_set_is_a_different_cache_key() -> None:
     one, two = StubChecker("one"), StubChecker("two")
-    service, _ = _service(one, two)
+    service = _service(one, two)
     _, sink = _events()
     digest = compute_digest(FILES)
     service.validate(digest, FILES, sink, ["one"])
@@ -115,35 +114,8 @@ def test_a_different_check_set_is_a_different_cache_key() -> None:
     assert two.calls == 1
 
 
-def test_the_tree_is_available_to_a_job_while_the_check_runs() -> None:
-    store = InMemoryTreeStore()
-    seen: list[int] = []
-
-    class PullingChecker:
-        @property
-        def name(self) -> str:
-            return "puller"
-
-        def run(self, digest: str, tree: Tree, progress: ProgressSink) -> Verdict:
-            seen.append(len(store.get(digest).files))
-            return Verdict(True, "puller", "1", "sha256:x")
-
-    service = ValidationService({"puller": PullingChecker()}, store)
-    _, sink = _events()
-    service.validate(compute_digest(FILES), FILES, sink)
-    assert seen == [1]
-
-
-def test_the_tree_is_discarded_once_validation_finishes() -> None:
-    service, store = _service(StubChecker("one"))
-    _, sink = _events()
-    digest = compute_digest(FILES)
-    service.validate(digest, FILES, sink)
-    assert store._trees == {}
-
-
 def test_a_check_that_raises_fails_closed() -> None:
-    service, _ = _service(ExplodingChecker())
+    service = _service(ExplodingChecker())
     _, sink = _events()
     result = service.validate(compute_digest(FILES), FILES, sink)
     assert not result.passed
@@ -151,7 +123,7 @@ def test_a_check_that_raises_fails_closed() -> None:
 
 
 def test_progress_ends_on_a_terminal_phase() -> None:
-    service, _ = _service(StubChecker("one", passed=False))
+    service = _service(StubChecker("one", passed=False))
     seen, sink = _events()
     service.validate(compute_digest(FILES), FILES, sink)
     assert seen[-1][0] == "validation-failed"

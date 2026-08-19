@@ -15,10 +15,6 @@ class MalformedTree(ManifestValidatorError):
     pass
 
 
-class UnknownTree(ManifestValidatorError):
-    pass
-
-
 class UnknownCheck(ManifestValidatorError):
     pass
 
