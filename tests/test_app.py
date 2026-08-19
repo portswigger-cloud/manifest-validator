@@ -11,24 +11,18 @@ import pytest
 from starlette.testclient import TestClient
 
 from manifest_validator.app import create_app
-from manifest_validator.checks import ProgressSink, StructuralChecker
-from manifest_validator.models import Tree, Verdict
+from manifest_validator.checks import StructuralChecker
 from manifest_validator.service import ValidationService
-from manifest_validator.trees import InMemoryTreeStore, compute_digest
+from manifest_validator.trees import compute_digest
 
 GOOD = b"apiVersion: v1\nkind: Namespace\nmetadata:\n  name: a\n"
 BAD = b"kind: Namespace\n"
 
 
 @pytest.fixture
-def store() -> InMemoryTreeStore:
-    return InMemoryTreeStore()
-
-
-@pytest.fixture
-def client(store: InMemoryTreeStore) -> TestClient:
-    service = ValidationService({"structural": StructuralChecker()}, store)
-    return TestClient(create_app(service, store, None))
+def client() -> TestClient:
+    service = ValidationService({"structural": StructuralChecker()})
+    return TestClient(create_app(service))
 
 
 def _blob(files: dict[str, bytes]) -> bytes:
@@ -163,41 +157,6 @@ def test_stream_reports_a_digest_mismatch_as_an_error_event(client: TestClient) 
     ) as response:
         events = _parse_sse("".join(response.iter_text()))
     assert events[-1][0] == "error"
-
-
-def test_tree_endpoint_serves_a_tar(store: InMemoryTreeStore) -> None:
-    service = ValidationService({"structural": StructuralChecker()}, store)
-    client = TestClient(create_app(service, store, None))
-    store.put("sha256:abc", Tree(files={"a.yaml": GOOD}))
-    response = client.get("/v1/trees/sha256:abc")
-    assert response.status_code == 200
-    with tarfile.open(fileobj=io.BytesIO(response.content)) as archive:
-        assert archive.getnames() == ["a.yaml"]
-
-
-def test_tree_endpoint_404s_for_an_unknown_digest(client: TestClient) -> None:
-    assert client.get("/v1/trees/sha256:nope").status_code == 404
-
-
-def test_a_job_can_pull_the_tree_while_its_check_runs(store: InMemoryTreeStore) -> None:
-    """The Job pulls over HTTP, so the tree must be reachable mid-check."""
-    pulled: list[list[str]] = []
-
-    class PullingChecker:
-        @property
-        def name(self) -> str:
-            return "puller"
-
-        def run(self, digest: str, tree: Tree, progress: ProgressSink) -> Verdict:
-            response = client.get(f"/v1/trees/{digest}")
-            with tarfile.open(fileobj=io.BytesIO(response.content)) as archive:
-                pulled.append(archive.getnames())
-            return Verdict(True, "puller", "1", "sha256:x")
-
-    service = ValidationService({"puller": PullingChecker()}, store)
-    client = TestClient(create_app(service, store, None))
-    assert _post(client, {"a.yaml": GOOD}).json()["passed"]
-    assert pulled == [["a.yaml"]]
 
 
 def _parse_sse(raw: str) -> list[tuple[str, str]]:

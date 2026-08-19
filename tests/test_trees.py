@@ -10,16 +10,8 @@ import pytest
 from manifest_validator.errors import (
     DigestMismatch,
     MalformedTree,
-    UnknownTree,
 )
-from manifest_validator.models import Tree
-from manifest_validator.trees import (
-    InMemoryTreeStore,
-    compute_digest,
-    from_tar_gz,
-    to_tar,
-    verify_digest,
-)
+from manifest_validator.trees import compute_digest, from_tar_gz, verify_digest
 
 
 def test_digest_is_independent_of_insertion_order() -> None:
@@ -54,27 +46,6 @@ def test_verify_digest_returns_the_digest_on_success() -> None:
     files = {"a.yaml": b"1"}
     expected = compute_digest(files)
     assert verify_digest(files, expected) == expected
-
-
-def test_tar_round_trips_and_is_deterministic() -> None:
-    tree = Tree(files={"b.yaml": b"two", "a.yaml": b"one"})
-    first = to_tar(tree)
-    assert first == to_tar(Tree(files={"a.yaml": b"one", "b.yaml": b"two"}))
-    with tarfile.open(fileobj=io.BytesIO(first)) as archive:
-        assert archive.getnames() == ["a.yaml", "b.yaml"]
-        member = archive.extractfile("a.yaml")
-        assert member is not None
-        assert member.read() == b"one"
-
-
-def test_store_discards_trees() -> None:
-    store = InMemoryTreeStore()
-    tree = Tree(files={"a.yaml": b"1"})
-    store.put("sha256:x", tree)
-    assert store.get("sha256:x") is tree
-    store.discard("sha256:x")
-    with pytest.raises(UnknownTree):
-        store.get("sha256:x")
 
 
 def _blob(files: dict[str, bytes]) -> bytes:

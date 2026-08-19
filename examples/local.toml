@@ -1,6 +1,5 @@
 # In-process checks only, so this runs outside a cluster.
 bind-address = "127.0.0.1:8080"
-disable-auth = true
 
 [[check]]
 name = "structural"
