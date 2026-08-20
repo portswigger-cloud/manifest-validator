@@ -18,6 +18,19 @@ class Finding:
     message: str
     file: str | None = None
     resource: str | None = None
+    similarity_id: str | None = None
+    """The scanner's stable identity for this finding, when it has one.
+
+    Reported so that a one-off suppression can be written from the verdict
+    itself, rather than by re-running the scanner by hand to recover the id.
+    """
+
+    accepted: str | None = None
+    """Why this finding does not fail the verdict, or None if it does.
+
+    Accepted findings stay in the report. A verdict that hid what it tolerated
+    could not be reviewed, which is the whole objection to a count.
+    """
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -26,6 +39,8 @@ class Finding:
             "file": self.file,
             "resource": self.resource,
             "message": self.message,
+            "similarity_id": self.similarity_id,
+            "accepted": self.accepted,
         }
 
 

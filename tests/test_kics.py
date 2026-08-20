@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from manifest_validator.commands import CommandOutcome, SubprocessRunner, write_tree
+from manifest_validator.config import PolicyException
 from manifest_validator.errors import CheckTimeout, MalformedTree
 from manifest_validator.kics import KicsChecker
 from manifest_validator.models import Tree
@@ -160,6 +161,161 @@ def test_a_non_zero_exit_with_no_findings_still_explains_itself() -> None:
     assert "126" in verdict.findings[0].message
 
 
+SOURCED_TREE = Tree(
+    files={
+        "cluster/clusterrole-crossplane-admin.yaml": b"# Source: crossplane\nkind: ClusterRole\n",
+        "relcoord/deployment-relcoord.yaml": b"# Source: relcoord\nkind: Deployment\n",
+        "argo/namespace-argo.yaml": b"apiVersion: v1\nkind: Namespace\n",
+    }
+)
+
+
+def _finding(
+    file_name: str,
+    *,
+    query_id: str = "abc-123",
+    query_name: str = "RBAC Wildcard In Rule",
+    severity: str = "HIGH",
+    similarity_id: str = "sim-1",
+) -> dict[str, Any]:
+    return {
+        "query_id": query_id,
+        "query_name": query_name,
+        "severity": severity,
+        "description": query_name,
+        "files": [
+            {
+                "file_name": file_name,
+                "resource_name": "x",
+                "similarity_id": similarity_id,
+            }
+        ],
+    }
+
+
+CROSSPLANE_WILDCARD = _finding("cluster/clusterrole-crossplane-admin.yaml")
+OUR_ESCALATION = _finding(
+    "relcoord/deployment-relcoord.yaml",
+    query_id="def-456",
+    query_name="Privilege Escalation Allowed",
+    similarity_id="sim-2",
+)
+
+
+def _run(report: dict[str, Any], *exceptions: PolicyException, exit_code: int = 50):
+    runner = StubRunner(exit_code=exit_code, report=report)
+    return _checker(runner, exceptions=exceptions).run(DIGEST, SOURCED_TREE, _noop)
+
+
+def test_provenance_comes_from_the_source_header() -> None:
+    """The tree names its own producer, so no exception has to name a path."""
+    verdict = _run(
+        _report([CROSSPLANE_WILDCARD]),
+        PolicyException(
+            source="crossplane", query="RBAC Wildcard In Rule", reason="aggregation"
+        ),
+    )
+    assert verdict.passed
+    assert verdict.findings[0].accepted == "aggregation"
+
+
+def test_an_accepted_finding_is_still_reported() -> None:
+    verdict = _run(
+        _report([CROSSPLANE_WILDCARD, OUR_ESCALATION]),
+        PolicyException(
+            source="crossplane", query="RBAC Wildcard In Rule", reason="aggregation"
+        ),
+    )
+    assert len(verdict.findings) == 2
+    assert not verdict.passed, "one unaccepted finding still fails the verdict"
+    assert [f.accepted for f in verdict.findings] == ["aggregation", None]
+
+
+def test_an_exception_does_not_leak_across_releases() -> None:
+    """Accepting crossplane's wildcards must not accept ours."""
+    verdict = _run(
+        _report([_finding("relcoord/deployment-relcoord.yaml")]),
+        PolicyException(
+            source="crossplane", query="RBAC Wildcard In Rule", reason="aggregation"
+        ),
+    )
+    assert not verdict.passed
+    assert verdict.findings[0].accepted is None
+
+
+def test_an_exception_does_not_leak_across_queries() -> None:
+    verdict = _run(
+        _report([OUR_ESCALATION]),
+        PolicyException(
+            source="relcoord", query="RBAC Wildcard In Rule", reason="aggregation"
+        ),
+    )
+    assert not verdict.passed
+
+
+def test_a_query_may_be_named_by_id() -> None:
+    verdict = _run(
+        _report([CROSSPLANE_WILDCARD]),
+        PolicyException(source="crossplane", query="abc-123", reason="by id"),
+    )
+    assert verdict.passed
+
+
+def test_a_similarity_id_accepts_one_finding_and_no_other() -> None:
+    verdict = _run(
+        _report([CROSSPLANE_WILDCARD, OUR_ESCALATION]),
+        PolicyException(similarity_id="sim-2", reason="teleport join token name"),
+    )
+    assert [f.accepted for f in verdict.findings] == [
+        None,
+        "teleport join token name",
+    ]
+
+
+def test_a_fully_accepted_scan_passes_despite_the_scanner_exit_code() -> None:
+    """KICS exits non-zero whenever it reports anything, accepted or not."""
+    verdict = _run(
+        _report([CROSSPLANE_WILDCARD]),
+        PolicyException(source="crossplane", query="abc-123", reason="aggregation"),
+        exit_code=50,
+    )
+    assert verdict.passed
+
+
+def test_a_file_without_a_source_header_can_never_be_accepted_by_provenance() -> None:
+    verdict = _run(
+        _report([_finding("argo/namespace-argo.yaml")]),
+        PolicyException(source="argo", query="abc-123", reason="tempting"),
+    )
+    assert not verdict.passed
+
+
+def test_an_exception_that_matches_nothing_is_reported_but_does_not_fail() -> None:
+    """The replacement for expiry dates: a dead exception announces itself."""
+    verdict = _run(
+        _report([CROSSPLANE_WILDCARD]),
+        PolicyException(source="crossplane", query="abc-123", reason="aggregation"),
+        PolicyException(source="cilium", query="xyz-789", reason="CNI needs SYS_ADMIN"),
+    )
+    assert verdict.passed
+    unused = [f for f in verdict.findings if f.rule_id == "kics/unused-exception"]
+    assert len(unused) == 1
+    assert "cilium" in unused[0].message
+    assert unused[0].accepted is not None
+
+
+def test_the_ruleset_digest_follows_the_exceptions() -> None:
+    """A verdict must not look identical after the policy has changed."""
+
+    def digest(*exceptions: PolicyException) -> str:
+        return _run(_report(), *exceptions, exit_code=0).ruleset_digest
+
+    assert digest() != digest(PolicyException(similarity_id="sim-2", reason="r"))
+    assert digest(PolicyException(similarity_id="sim-2", reason="r")) != digest(
+        PolicyException(similarity_id="sim-2", reason="different reason")
+    )
+
+
 def test_write_tree_refuses_a_path_that_escapes_the_workspace(tmp_path: Path) -> None:
     with pytest.raises(MalformedTree):
         write_tree(Tree(files={"../escape.yaml": b""}), tmp_path)
@@ -179,3 +335,8 @@ def test_the_command_runs_without_a_shell() -> None:
     """No shell means no word splitting, globbing or substitution in a check."""
     outcome = SubprocessRunner().run(("echo", "$HOME; ls"), Path.cwd(), 10)
     assert outcome.stdout.strip() == "$HOME; ls"
+
+
+def test_the_similarity_id_is_reported_so_a_suppression_can_be_written() -> None:
+    verdict = _run(_report([OUR_ESCALATION]))
+    assert verdict.findings[0].similarity_id == "sim-2"

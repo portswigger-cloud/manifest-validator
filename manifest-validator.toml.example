@@ -27,3 +27,35 @@ kind = "kics"
 types = ["Kubernetes", "Crossplane"]
 exclude-severities = ["medium", "low", "info"]
 timeout-seconds = 600
+
+# Which findings do not fail the verdict.
+#
+# Keyed on provenance, not on a count. `source` is the release that produced the
+# file, read from the `# Source:` header manifest-builder writes, so an
+# exception survives a chart upgrade but cannot spread to another release. A
+# count cannot tell an inherent capability in someone else's chart from a false
+# positive in ours, so raising it for one silently widens tolerance for the
+# other — and it inverts on fixes.
+#
+# Accepted findings stay in the report, marked with the reason. An exception
+# that stops matching anything is reported too: that is what expiry dates were
+# reaching for, and it fires when the exception actually dies rather than on a
+# calendar. Review is the control here, so this list wants its own CODEOWNERS
+# entry.
+[[check.exception]]
+source = "crossplane"
+query = "RBAC Wildcard In Rule"
+reason = "aggregated ClusterRoles aggregate by wildcard; that is the mechanism"
+
+[[check.exception]]
+source = "argocd"
+query = "RBAC Wildcard In Rule"
+reason = "aggregated ClusterRoles aggregate by wildcard; that is the mechanism"
+
+# The escape hatch, for a single finding rather than a class of them. Read the
+# id off the verdict. Prefer provenance: a similarity id covers query, file,
+# resource and search key, so a rename invalidates it and a refactor becomes a
+# failure.
+# [[check.exception]]
+# similarity-id = "ff7c0383caa50a5f366a9f582d0945b16eb5248ac2f4921ae631cca528c0b2a4"
+# reason = "Teleport kubernetes-join token name, not a credential"

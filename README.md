@@ -89,12 +89,17 @@ The response aggregates one verdict per check:
       "tool_version": "v2.1.16",
       "ruleset_digest": "sha256:…",
       "findings": [
-        {"rule_id": "…", "severity": "high", "file": "…", "resource": "…", "message": "…"}
+        {"rule_id": "…", "severity": "high", "file": "…", "resource": "…", "message": "…",
+         "similarity_id": "…", "accepted": null}
       ]
     }
   ]
 }
 ```
+
+`accepted` is null when a finding fails the verdict, and otherwise the reason it
+does not. `similarity_id` is reported so a one-off suppression can be written
+from the verdict rather than by re-running the scanner by hand.
 
 `passed` is decided by the check that produced the findings and is never
 recomputed by a caller from the findings list. `tool_version` and
@@ -149,9 +154,29 @@ Three kinds, all behind one `Checker` seam:
   model.
 - `kics` — runs KICS as a child process, over a tree written to a temporary
   directory, with no shell. The binary, its query library and the report wiring
-  are fixed by this image; config chooses only the platform types to scan and
-  the severities to ignore. `tool_version` is read from the report KICS wrote,
-  so a verdict cannot name a version that did not produce it.
+  are fixed by this image; config chooses the platform types to scan, the
+  severities to ignore, and which findings do not fail a verdict.
+  `tool_version` is read from the report KICS wrote, so a verdict cannot name a
+  version that did not produce it.
+
+  Which findings fail is a policy, and the policy is expressed here rather than
+  in KICS's own `--exclude-*` flags: anything excluded there vanishes from the
+  report, so the verdict could not say what it tolerated. Every finding is
+  reported; an accepted one carries the reason it does not fail. See
+  `[[check.exception]]` in `manifest-validator.toml.example`.
+
+  Exceptions are keyed on **provenance** — the release that produced the file,
+  from the `# Source:` header manifest-builder writes — plus a query. Not on a
+  count, which cannot distinguish an inherent capability in an upstream chart
+  from a false positive in our own code, so raising it for one silently widens
+  tolerance for the other. A file with no `# Source:` header (manifest-builder
+  synthesises namespaces) can never be accepted by provenance.
+
+  An exception that matches nothing is itself reported, as an accepted
+  `kics/unused-exception` finding. That is the signal expiry dates were reaching
+  for, without manufacturing failures on a schedule unrelated to whether
+  anything changed — and without failing a build because someone fixed the thing
+  upstream.
 
 A check that raises fails closed and reports a `check-error` finding. A `kics`
 check whose output cannot be parsed fails rather than passing: a green verdict
