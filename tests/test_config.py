@@ -156,3 +156,18 @@ def test_exceptions_are_meaningless_on_a_non_kics_check() -> None:
                 ]
             }
         )
+
+
+def test_a_check_is_gated_unless_it_says_otherwise() -> None:
+    settings = Settings.from_mapping(
+        {
+            "check": [
+                {"name": "structural", "kind": "structural"},
+                {"name": "kics", "kind": "kics", "advisory": True},
+            ]
+        }
+    )
+
+    assert [check.advisory for check in settings.checks] == [False, True]
+    assert settings.advisory_check_names == ("kics",)
+    assert settings.default_check_names == ("structural", "kics")

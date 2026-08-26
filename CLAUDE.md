@@ -48,7 +48,10 @@ need a `system` PR, a regeneration, an Argo sync and a pod restart.
   only while every tool is offline and unauthenticated, as KICS is.
 - `service.py` — verifies the claimed digest, checks `VerdictCache`, runs the
   checks, aggregates. A check that raises fails closed with a `check-error`
-  finding.
+  finding. An `advisory` check's findings are reported without failing the
+  verdict, which is where a noisy check sits while its findings are worked
+  through; that decision is here rather than in relcoord because this service
+  owns pass/fail.
 - `trees.py` — the content digest and the tar reader. `compute_digest` is a wire
   contract shared with relcoord; changing it invalidates every cached verdict
   and must be a `-v2` prefix, not an edit.
