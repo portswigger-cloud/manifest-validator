@@ -57,10 +57,19 @@ class Verdict:
     tool_version: str
     ruleset_digest: str
     findings: tuple[Finding, ...] = ()
+    advisory: bool = False
+    """Whether this check reports without failing the verdict.
+
+    ``passed`` is already true for an advisory check, so a caller needs nothing
+    from this to gate correctly. It is reported so that a caller showing the
+    findings to a person can say they blocked nothing — a reader who sees
+    findings and no explanation reasonably assumes they did.
+    """
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "passed": self.passed,
+            "advisory": self.advisory,
             "tool": self.tool,
             "tool_version": self.tool_version,
             "ruleset_digest": self.ruleset_digest,
