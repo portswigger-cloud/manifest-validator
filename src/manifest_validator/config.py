@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
-CheckKind = Literal["structural", "image-policy", "kics"]
+CheckKind = Literal["structural", "image-policy", "kics", "config"]
 
 KICS_SEVERITIES = ("critical", "high", "medium", "low", "info")
 
@@ -97,9 +97,10 @@ class CheckConfig:
         if not isinstance(name, str) or not name.strip():
             raise ValueError("check.name must be a non-empty string")
         kind = data.get("kind")
-        if kind not in ("structural", "image-policy", "kics"):
+        if kind not in ("structural", "image-policy", "kics", "config"):
             raise ValueError(
-                f"check.{name}.kind must be 'structural', 'image-policy' or 'kics'"
+                f"check.{name}.kind must be 'structural', 'image-policy', 'kics' "
+                "or 'config'"
             )
         exclude_severities = _string_tuple(data, "exclude-severities")
         unknown = [s for s in exclude_severities if s not in KICS_SEVERITIES]
@@ -112,6 +113,12 @@ class CheckConfig:
             raise ValueError(
                 f"check.{name}.exclude-severities excludes every severity, so the "
                 "check could never fail"
+            )
+        allowed_registries = _string_tuple(data, "allowed-registries")
+        if kind == "config" and not allowed_registries:
+            raise ValueError(
+                f"check.{name}.allowed-registries is required for a 'config' check: "
+                "it decides which images this service will execute"
             )
         timeout_seconds = _int(data, "timeout-seconds", cls.timeout_seconds)
         if timeout_seconds <= 0:
@@ -132,7 +139,7 @@ class CheckConfig:
             types=_string_tuple(data, "types"),
             exclude_severities=exclude_severities,
             timeout_seconds=timeout_seconds,
-            allowed_registries=_string_tuple(data, "allowed-registries"),
+            allowed_registries=allowed_registries,
             require_pinned=_bool(data, "require-pinned", cls.require_pinned),
             default=_bool(data, "default", cls.default),
             advisory=_bool(data, "advisory", cls.advisory),

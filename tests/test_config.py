@@ -22,7 +22,7 @@ def test_the_example_documents_every_check_kind() -> None:
     with EXAMPLE.open("rb") as handle:
         data = tomllib.load(handle)
     kinds = {check["kind"] for check in data["check"]}
-    assert kinds == {"structural", "image-policy", "kics"}
+    assert kinds == {"structural", "image-policy", "kics", "config"}
 
 
 def test_defaults_apply() -> None:
@@ -171,3 +171,25 @@ def test_a_check_is_gated_unless_it_says_otherwise() -> None:
     assert [check.advisory for check in settings.checks] == [False, True]
     assert settings.advisory_check_names == ("kics",)
     assert settings.default_check_names == ("structural", "kics")
+
+
+def test_a_config_check_is_a_kind() -> None:
+    settings = Settings.from_mapping(
+        {
+            "check": [
+                {
+                    "name": "app-config",
+                    "kind": "config",
+                    "allowed-registries": ["public.ecr.aws/"],
+                }
+            ]
+        }
+    )
+    (check,) = settings.checks
+    assert check.kind == "config"
+    assert check.allowed_registries == ("public.ecr.aws/",)
+
+
+def test_a_config_check_with_no_allowed_registry_could_run_nothing() -> None:
+    with pytest.raises(ValueError, match="allowed-registries"):
+        Settings.from_mapping({"check": [{"name": "app-config", "kind": "config"}]})

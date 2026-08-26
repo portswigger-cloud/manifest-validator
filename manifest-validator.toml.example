@@ -19,6 +19,27 @@ kind = "image-policy"
 allowed-registries = ["public.ecr.aws/"]
 require-pinned = true
 
+# Ask each application whether the config a tree holds for it is valid, by
+# running its own image over it. Nothing here knows what any application's config
+# means; the application is the only thing that does.
+#
+# A ConfigMap opts in with manifest-validator.portswigger.com annotations naming
+# an image and a mount path — never a command. The argv is fixed in this service,
+# so a generated tree cannot choose what runs.
+#
+# Advisory to begin with: an application that has never been asked this question
+# will have findings nobody has triaged, and a config nobody has looked at should
+# not stop a deployment on the day the check arrives.
+[[check]]
+name = "app-config"
+kind = "config"
+advisory = true
+# Which images this service is willing to execute. Not the same list as
+# image-policy's, which governs what the cluster may run; this one governs what
+# runs here, in this pod, with this service's privileges.
+allowed-registries = ["public.ecr.aws/portswigger-platform/"]
+timeout-seconds = 120
+
 [[check]]
 name = "kics"
 kind = "kics"

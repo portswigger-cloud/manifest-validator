@@ -122,6 +122,55 @@ event: result            data: {…the JSON above…}
 Phase strings are public API. relcoord forwards them into its own SSE stream,
 which is what puts progress into the pull request without any CI change.
 
+## Validating an application's own config
+
+A ConfigMap opts in by carrying annotations manifest-builder wrote for it:
+
+```yaml
+metadata:
+  annotations:
+    manifest-validator.portswigger.com/validate-config: "true"
+    manifest-validator.portswigger.com/image: public.ecr.aws/portswigger-platform/idcat:1.0
+    manifest-validator.portswigger.com/mount-path: /config
+```
+
+The check writes that ConfigMap's data into a directory, runs the named image
+with the config mounted read-only where the application expects it, and reads
+the exit code. Zero is a valid config; anything else is a `config/invalid`
+finding carrying what the image said, truncated.
+
+The image must accept `--validate-config`: check the config, say what is wrong,
+exit non-zero, and reach nothing over the network to decide.
+
+The tree names an image and a path, and never a command. The argv is a constant
+in this service, so a `system` pull request cannot choose the command line this
+pod executes. The image must also match the check's own `allowed-registries` —
+a separate list from `image-policy`'s, because that one governs what the cluster
+may run and this one governs what runs *here*, with this service's privileges.
+
+A declaration missing its image or its mount path is a
+`config/malformed-declaration` finding rather than a skip: silence would be
+indistinguishable from an application with no config to check.
+
+### How the image is run
+
+`crane export` fetches the image's flattened filesystem, and `crun` execs
+`--validate-config` in it over a minimal OCI bundle: no network namespace, a
+read-only root, a read-only bind mount for the config, every capability dropped,
+`noNewPrivileges`, and a non-root uid. Both tools are copied into this image, so
+a validation pulls nothing but the image under test.
+
+The isolation is in that bundle, and it is the only isolation there is. Unpacking
+an image and exec'ing its entrypoint directly would run a third party's code in
+this pod's own namespaces — which a fixed argv and a registry allow-list cannot
+protect against. A `crun` that will not start is therefore a `check-error`, not a
+fallback to a bare exec.
+
+Two things this needs that the deployment does not have yet: egress to
+`public.ecr.aws` so crane can fetch, and somewhere to cache what it fetched so a
+repeat validation does not re-pull. Until the first exists the check reports
+`check-error` for every declaration, which is why it ships `advisory = true`.
+
 ## Content digest
 
 The digest is the key a verdict is about. It lets this service dedupe repeat
@@ -146,7 +195,7 @@ A digest mismatch is a 400, not a warning. The server validates what it hashed.
 
 ## Checks
 
-Three kinds, all behind one `Checker` seam:
+Four kinds, all behind one `Checker` seam:
 
 - `structural` — in-process. Every document parses and carries `apiVersion`,
   `kind` and `metadata.name`. Cheap and deterministic, and it reads the tree
@@ -161,6 +210,11 @@ Three kinds, all behind one `Checker` seam:
   severities to ignore, and which findings do not fail a verdict.
   `tool_version` is read from the report KICS wrote, so a verdict cannot name a
   version that did not produce it.
+
+- `config` — asks each application whether the config a tree holds for it is
+  valid, by running that application's own image over it. Nothing here knows
+  what any application's config means, which is the point: only the application
+  does. See "Validating an application's own config".
 
   Which findings fail is a policy, and the policy is expressed here rather than
   in KICS's own `--exclude-*` flags: anything excluded there vanishes from the
@@ -268,6 +322,15 @@ private index `https://repo.noa.re/`.
 - **Trees live in memory.** A restart mid-scan loses the tree and the validation
   fails. S3 is the answer when the exact scanned bytes need retaining against a
   finding.
+
+- **The `config` check has never run against a real image.** Its logic is
+  covered by tests with a stubbed runner, and the `crane`/`crun` wiring by tests
+  with a stubbed command runner, but nothing here has fetched an image or
+  created a namespace. Two things are unverified until it runs in the cluster:
+  whether the Dockerfile's `crun` and its libraries actually exec under
+  distroless, and whether crun can unshare a user namespace inside this pod's
+  `securityContext` at all. The second is the one that decides whether this
+  design works.
 
 - **A scanner runs with this service's privileges.** That is only acceptable
   while every tool is offline and unauthenticated, as KICS is. A tool that needs

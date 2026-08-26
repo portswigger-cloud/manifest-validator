@@ -11,9 +11,11 @@ from hypercorn.asyncio import serve
 from hypercorn.config import Config as HypercornConfig
 
 from manifest_validator.app import create_app
+from manifest_validator.appconfig import AppConfigChecker
 from manifest_validator.checks import Checker, ImagePolicyChecker, StructuralChecker
 from manifest_validator.commands import SubprocessRunner
 from manifest_validator.config import CheckConfig, Settings
+from manifest_validator.containers import CraneCrunRunner
 from manifest_validator.kics import KicsChecker
 from manifest_validator.service import ValidationService
 
@@ -33,6 +35,13 @@ def _build_checker(check: CheckConfig) -> Checker:
         return ImagePolicyChecker(
             allowed_registries=check.allowed_registries,
             require_pinned=check.require_pinned,
+        )
+    if check.kind == "config":
+        return AppConfigChecker(
+            check_name=check.name,
+            runner=CraneCrunRunner(),
+            allowed_registries=check.allowed_registries,
+            timeout_seconds=check.timeout_seconds,
         )
     return KicsChecker(
         check_name=check.name,
