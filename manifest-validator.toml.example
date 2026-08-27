@@ -31,6 +31,10 @@ advisory = true
 # each type costs scan time for no findings.
 types = ["Kubernetes", "Crossplane"]
 exclude-severities = ["medium", "low", "info"]
+# Queries not asked of these trees at all, by id. An exception says a finding was
+# read and accepted, and is reported when it stops matching; this is silent, so
+# the reason carries the whole justification.
+# exclude-queries = ["3e2d3b2f-c22a-4df1-9cc6-a7a0aebb0c99"]
 timeout-seconds = 600
 
 # Which findings do not fail the verdict.

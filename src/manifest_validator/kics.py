@@ -38,6 +38,7 @@ class KicsChecker:
     runner: CommandRunner
     types: tuple[str, ...] = ()
     exclude_severities: tuple[str, ...] = ()
+    exclude_queries: tuple[str, ...] = ()
     timeout_seconds: int = 600
     exceptions: tuple[PolicyException, ...] = ()
 
@@ -102,6 +103,8 @@ class KicsChecker:
             argv += ["--type", ",".join(self.types)]
         if self.exclude_severities:
             argv += ["--exclude-severities", ",".join(self.exclude_severities)]
+        if self.exclude_queries:
+            argv += ["--exclude-queries", ",".join(self.exclude_queries)]
         return tuple(argv)
 
     def _ruleset_digest(self, report: dict[str, Any] | None) -> str:
@@ -110,6 +113,7 @@ class KicsChecker:
             _version(report),
             *sorted(self.types),
             *sorted(self.exclude_severities),
+            *sorted(self.exclude_queries),
             *sorted(
                 f"{e.source}|{e.query}|{e.similarity_id}|{e.reason}"
                 for e in self.exceptions
