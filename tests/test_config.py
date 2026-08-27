@@ -71,6 +71,45 @@ def test_excluding_every_severity_is_rejected() -> None:
         Settings.from_mapping(data)
 
 
+def test_excluded_queries_are_read_onto_the_check() -> None:
+    query = "3e2d3b2f-c22a-4df1-9cc6-a7a0aebb0c99"
+    settings = Settings.from_mapping(
+        {"check": [{"name": "kics", "kind": "kics", "exclude-queries": [query]}]}
+    )
+    assert settings.checks[0].exclude_queries == (query,)
+
+
+def test_a_malformed_query_id_is_refused() -> None:
+    """An id that matches nothing would exclude nothing, silently."""
+    with pytest.raises(ValueError, match="not query uuids"):
+        Settings.from_mapping(
+            {
+                "check": [
+                    {
+                        "name": "kics",
+                        "kind": "kics",
+                        "exclude-queries": ["Passwords And Secrets"],
+                    }
+                ]
+            }
+        )
+
+
+def test_excluded_queries_are_meaningless_on_a_non_kics_check() -> None:
+    with pytest.raises(ValueError, match="only meaningful"):
+        Settings.from_mapping(
+            {
+                "check": [
+                    {
+                        "name": "structural",
+                        "kind": "structural",
+                        "exclude-queries": ["3e2d3b2f-c22a-4df1-9cc6-a7a0aebb0c99"],
+                    }
+                ]
+            }
+        )
+
+
 def test_an_unknown_kind_is_rejected() -> None:
     data = {"check": [{"name": "x", "kind": "sorcery"}]}
     with pytest.raises(ValueError, match="kind must be"):

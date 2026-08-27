@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +14,10 @@ logger = logging.getLogger(__name__)
 CheckKind = Literal["structural", "image-policy", "kics"]
 
 KICS_SEVERITIES = ("critical", "high", "medium", "low", "info")
+
+# A typo in an excluded id would silently exclude nothing, and nothing would ever
+# report it: the queries it names are the ones that stop being asked.
+_QUERY_ID = re.compile(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 
 
 @dataclass(frozen=True)
@@ -75,6 +80,14 @@ class CheckConfig:
     kind: CheckKind
     types: tuple[str, ...] = ()
     exclude_severities: tuple[str, ...] = ()
+    exclude_queries: tuple[str, ...] = ()
+    """Queries the scanner does not run.
+
+    An exception says a finding was read and accepted; this says the question is
+    not worth asking of these trees. The difference matters on review: an
+    exception that stops matching is reported, an excluded query is silent by
+    construction, so the reason has to carry its own justification.
+    """
     timeout_seconds: int = 600
     allowed_registries: tuple[str, ...] = ()
     require_pinned: bool = True
@@ -100,6 +113,17 @@ class CheckConfig:
         if kind not in ("structural", "image-policy", "kics"):
             raise ValueError(
                 f"check.{name}.kind must be 'structural', 'image-policy' or 'kics'"
+            )
+        exclude_queries = _string_tuple(data, "exclude-queries")
+        if exclude_queries and kind != "kics":
+            raise ValueError(
+                f"check.{name}.exclude-queries is only meaningful for a 'kics' check"
+            )
+        malformed = [q for q in exclude_queries if not _QUERY_ID.fullmatch(q)]
+        if malformed:
+            raise ValueError(
+                f"check.{name}.exclude-queries has ids that are not query uuids "
+                f"{sorted(malformed)}; read them off a verdict's rule id"
             )
         exclude_severities = _string_tuple(data, "exclude-severities")
         unknown = [s for s in exclude_severities if s not in KICS_SEVERITIES]
@@ -131,6 +155,7 @@ class CheckConfig:
             kind=kind,
             types=_string_tuple(data, "types"),
             exclude_severities=exclude_severities,
+            exclude_queries=exclude_queries,
             timeout_seconds=timeout_seconds,
             allowed_registries=_string_tuple(data, "allowed-registries"),
             require_pinned=_bool(data, "require-pinned", cls.require_pinned),

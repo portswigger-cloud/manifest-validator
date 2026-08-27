@@ -15,6 +15,9 @@ from manifest_validator.kics import KicsChecker
 from manifest_validator.models import Tree
 
 DIGEST = "sha256:" + "a" * 64
+
+QUERY_ID = "3e2d3b2f-c22a-4df1-9cc6-a7a0aebb0c99"
+OTHER_QUERY_ID = "baee238e-1921-4801-9c3f-79ae1d7b2cbc"
 TREE = Tree(files={"a.yaml": b"apiVersion: v1\n", "nested/b.yaml": b"kind: X\n"})
 
 
@@ -101,8 +104,17 @@ def test_config_chooses_types_and_exclusions_and_nothing_else() -> None:
     ).run(DIGEST, TREE, _noop)
     assert _flag(runner.argv, "--type") == "Kubernetes,Crossplane"
     assert _flag(runner.argv, "--exclude-severities") == "medium,low"
+    assert "--exclude-queries" not in runner.argv
     assert _flag(runner.argv, "--queries-path") == "/opt/kics/assets/queries"
     assert _flag(runner.argv, "--report-formats") == "json"
+
+
+def test_excluded_queries_are_not_asked_of_the_tree() -> None:
+    runner = StubRunner(report=_report())
+    _checker(runner, exclude_queries=(QUERY_ID, OTHER_QUERY_ID)).run(
+        DIGEST, TREE, _noop
+    )
+    assert _flag(runner.argv, "--exclude-queries") == f"{QUERY_ID},{OTHER_QUERY_ID}"
 
 
 def test_types_and_exclusions_are_omitted_when_unset() -> None:
@@ -110,6 +122,7 @@ def test_types_and_exclusions_are_omitted_when_unset() -> None:
     _checker(runner).run(DIGEST, TREE, _noop)
     assert "--type" not in runner.argv
     assert "--exclude-severities" not in runner.argv
+    assert "--exclude-queries" not in runner.argv
 
 
 def test_a_clean_scan_passes() -> None:
@@ -144,6 +157,7 @@ def test_the_ruleset_digest_follows_version_and_selection() -> None:
     assert digest(types=("Kubernetes",)) == base
     assert digest(types=("Kubernetes", "Crossplane")) != base
     assert digest(types=("Kubernetes",), exclude_severities=("low",)) != base
+    assert digest(types=("Kubernetes",), exclude_queries=(QUERY_ID,)) != base
 
 
 def test_an_unreadable_report_fails_rather_than_passing_silently() -> None:

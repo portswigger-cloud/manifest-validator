@@ -39,6 +39,7 @@ def _build_checker(check: CheckConfig) -> Checker:
         runner=SubprocessRunner(),
         types=check.types,
         exclude_severities=check.exclude_severities,
+        exclude_queries=check.exclude_queries,
         timeout_seconds=check.timeout_seconds,
         exceptions=check.exceptions,
     )

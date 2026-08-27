@@ -158,7 +158,7 @@ Three kinds, all behind one `Checker` seam:
 - `kics` — runs KICS as a child process, over a tree written to a temporary
   directory, with no shell. The binary, its query library and the report wiring
   are fixed by this image; config chooses the platform types to scan, the
-  severities to ignore, and which findings do not fail a verdict.
+  severities and queries to ignore, and which findings do not fail a verdict.
   `tool_version` is read from the report KICS wrote, so a verdict cannot name a
   version that did not produce it.
 
