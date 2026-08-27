@@ -132,15 +132,14 @@ class StructuralChecker:
 
 @dataclass(frozen=True)
 class ImagePolicyChecker:
-    """Image references must be pinned and come from an allowed registry.
+    """Image references must be pinned.
 
     The first rule with teeth: it fails for a real reason before any scanner
     exists, which is what exercises the red path end to end.
     """
 
-    allowed_registries: tuple[str, ...]
     require_pinned: bool = True
-    version: str = "1"
+    version: str = "2"
 
     @property
     def name(self) -> str:
@@ -158,25 +157,13 @@ class ImagePolicyChecker:
             passed=not findings,
             tool=self.name,
             tool_version=self.version,
-            ruleset_digest=_ruleset_digest(
-                self.name, self.version, *sorted(self.allowed_registries)
-            ),
+            ruleset_digest=_ruleset_digest(self.name, self.version),
             findings=tuple(findings),
         )
 
     def _findings_for(
         self, reference: str, path: str, resource: str
     ) -> Iterator[Finding]:
-        if self.allowed_registries and not any(
-            reference.startswith(registry) for registry in self.allowed_registries
-        ):
-            yield Finding(
-                rule_id="image-policy/registry-not-allowed",
-                severity="high",
-                message=f"image {reference!r} is not from an allowed registry",
-                file=path,
-                resource=resource,
-            )
         if self.require_pinned and not _is_pinned(reference):
             yield Finding(
                 rule_id="image-policy/unpinned",

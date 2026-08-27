@@ -144,9 +144,8 @@ exit non-zero, and reach nothing over the network to decide.
 
 The tree names an image and a path, and never a command. The argv is a constant
 in this service, so a `system` pull request cannot choose the command line this
-pod executes. The image must also match the check's own `allowed-registries` —
-a separate list from `image-policy`'s, because that one governs what the cluster
-may run and this one governs what runs *here*, with this service's privileges.
+pod executes. The image must also match the check's own `allowed-registries`,
+which governs what runs *here*, with this service's privileges.
 
 A declaration missing its image or its mount path is a
 `config/malformed-declaration` finding rather than a skip: silence would be
@@ -201,9 +200,8 @@ Four kinds, all behind one `Checker` seam:
   `kind` and `metadata.name`. Cheap and deterministic, and it reads the tree
   straight from memory.
 - `image-policy` — in-process. Image references must be pinned to a digest or a
-  tag other than `latest`, and come from an allowed registry. Finds `image:`
-  anywhere in a document, including in custom resources this service does not
-  model.
+  tag other than `latest`. Finds `image:` anywhere in a document, including in
+  custom resources this service does not model.
 - `kics` — runs KICS as a child process, over a tree written to a temporary
   directory, with no shell. The binary, its query library and the report wiring
   are fixed by this image; config chooses the platform types to scan, the

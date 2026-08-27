@@ -120,6 +120,12 @@ class CheckConfig:
                 f"check.{name}.allowed-registries is required for a 'config' check: "
                 "it decides which images this service will execute"
             )
+        if allowed_registries and kind != "config":
+            raise ValueError(
+                f"check.{name}.allowed-registries is only meaningful for a 'config' "
+                "check; image-policy no longer restricts where a cluster image "
+                "comes from"
+            )
         timeout_seconds = _int(data, "timeout-seconds", cls.timeout_seconds)
         if timeout_seconds <= 0:
             raise ValueError(f"check.{name}.timeout-seconds must be positive")

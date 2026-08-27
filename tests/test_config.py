@@ -193,3 +193,18 @@ def test_a_config_check_is_a_kind() -> None:
 def test_a_config_check_with_no_allowed_registry_could_run_nothing() -> None:
     with pytest.raises(ValueError, match="allowed-registries"):
         Settings.from_mapping({"check": [{"name": "app-config", "kind": "config"}]})
+
+
+def test_an_image_policy_check_may_not_set_allowed_registries() -> None:
+    with pytest.raises(ValueError, match="only meaningful for a 'config' check"):
+        Settings.from_mapping(
+            {
+                "check": [
+                    {
+                        "name": "image-policy",
+                        "kind": "image-policy",
+                        "allowed-registries": ["public.ecr.aws/"],
+                    }
+                ]
+            }
+        )
