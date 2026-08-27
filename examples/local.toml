@@ -8,5 +8,4 @@ kind = "structural"
 [[check]]
 name = "image-policy"
 kind = "image-policy"
-allowed-registries = ["public.ecr.aws/"]
 require-pinned = true

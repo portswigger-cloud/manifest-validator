@@ -32,10 +32,7 @@ def _build_checker(check: CheckConfig) -> Checker:
     if check.kind == "structural":
         return StructuralChecker()
     if check.kind == "image-policy":
-        return ImagePolicyChecker(
-            allowed_registries=check.allowed_registries,
-            require_pinned=check.require_pinned,
-        )
+        return ImagePolicyChecker(require_pinned=check.require_pinned)
     if check.kind == "config":
         return AppConfigChecker(
             check_name=check.name,

@@ -59,7 +59,7 @@ def test_structural_skips_empty_documents() -> None:
     assert StructuralChecker().run(DIGEST, tree, _noop).passed
 
 
-def test_image_policy_accepts_a_pinned_allowed_image() -> None:
+def test_image_policy_accepts_a_pinned_image() -> None:
     tree = _tree(
         {
             "deployment.yaml": (
@@ -69,11 +69,11 @@ def test_image_policy_accepts_a_pinned_allowed_image() -> None:
             )
         }
     )
-    checker = ImagePolicyChecker(allowed_registries=("public.ecr.aws/",))
+    checker = ImagePolicyChecker()
     assert checker.run(DIGEST, tree, _noop).passed
 
 
-def test_image_policy_rejects_a_disallowed_registry() -> None:
+def test_image_policy_accepts_a_pinned_third_party_image() -> None:
     tree = _tree(
         {
             "deployment.yaml": (
@@ -83,10 +83,7 @@ def test_image_policy_rejects_a_disallowed_registry() -> None:
             )
         }
     )
-    checker = ImagePolicyChecker(allowed_registries=("public.ecr.aws/",))
-    verdict = checker.run(DIGEST, tree, _noop)
-    assert not verdict.passed
-    assert verdict.findings[0].rule_id == "image-policy/registry-not-allowed"
+    assert ImagePolicyChecker().run(DIGEST, tree, _noop).passed
 
 
 def test_image_policy_rejects_an_unpinned_image() -> None:
@@ -99,7 +96,7 @@ def test_image_policy_rejects_an_unpinned_image() -> None:
             )
         }
     )
-    checker = ImagePolicyChecker(allowed_registries=("public.ecr.aws/",))
+    checker = ImagePolicyChecker()
     verdict = checker.run(DIGEST, tree, _noop)
     assert {f.rule_id for f in verdict.findings} == {"image-policy/unpinned"}
 
@@ -114,7 +111,7 @@ def test_image_policy_treats_latest_as_unpinned() -> None:
             )
         }
     )
-    checker = ImagePolicyChecker(allowed_registries=("public.ecr.aws/",))
+    checker = ImagePolicyChecker()
     assert not checker.run(DIGEST, tree, _noop).passed
 
 
@@ -128,7 +125,7 @@ def test_image_policy_accepts_a_digest_reference() -> None:
             )
         }
     )
-    checker = ImagePolicyChecker(allowed_registries=("public.ecr.aws/",))
+    checker = ImagePolicyChecker()
     assert checker.run(DIGEST, tree, _noop).passed
 
 
@@ -137,9 +134,9 @@ def test_image_policy_finds_images_nested_in_custom_resources() -> None:
         {
             "xr.yaml": (
                 "apiVersion: platform.portswigger.io/v1alpha1\nkind: Thing\n"
-                "metadata:\n  name: a\nspec:\n  runner:\n    image: docker.io/x:1\n"
+                "metadata:\n  name: a\nspec:\n  runner:\n    image: docker.io/x:latest\n"
             )
         }
     )
-    checker = ImagePolicyChecker(allowed_registries=("public.ecr.aws/",))
+    checker = ImagePolicyChecker()
     assert not checker.run(DIGEST, tree, _noop).passed

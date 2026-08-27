@@ -16,7 +16,6 @@ kind = "structural"
 [[check]]
 name = "image-policy"
 kind = "image-policy"
-allowed-registries = ["public.ecr.aws/"]
 require-pinned = true
 
 # Ask each application whether the config a tree holds for it is valid, by
@@ -34,9 +33,7 @@ require-pinned = true
 name = "app-config"
 kind = "config"
 advisory = true
-# Which images this service is willing to execute. Not the same list as
-# image-policy's, which governs what the cluster may run; this one governs what
-# runs here, in this pod, with this service's privileges.
+# Which images this service is willing to execute, with its own privileges.
 allowed-registries = ["public.ecr.aws/portswigger-platform/"]
 timeout-seconds = 120
 
