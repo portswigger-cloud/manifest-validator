@@ -92,16 +92,6 @@ class CheckConfig:
     allowed_registries: tuple[str, ...] = ()
     require_pinned: bool = True
     default: bool = True
-    advisory: bool = False
-    """Whether this check reports its findings without failing the verdict.
-
-    Somewhere for a check to sit while its findings are being worked through:
-    every finding is reported, and a caller that gates on ``passed`` deploys
-    anyway. It belongs here rather than in the caller's config, because whether
-    a finding stops a deployment is this service's decision to make.
-
-    A check left advisory indefinitely is one nobody is acting on.
-    """
     exceptions: tuple[PolicyException, ...] = ()
 
     @classmethod
@@ -160,7 +150,6 @@ class CheckConfig:
             allowed_registries=_string_tuple(data, "allowed-registries"),
             require_pinned=_bool(data, "require-pinned", cls.require_pinned),
             default=_bool(data, "default", cls.default),
-            advisory=_bool(data, "advisory", cls.advisory),
             exceptions=exceptions,
         )
 
@@ -200,10 +189,6 @@ class Settings:
     @property
     def default_check_names(self) -> tuple[str, ...]:
         return tuple(check.name for check in self.checks if check.default)
-
-    @property
-    def advisory_check_names(self) -> tuple[str, ...]:
-        return tuple(check.name for check in self.checks if check.advisory)
 
 
 def _string(data: dict[str, Any], key: str, default: str) -> str:

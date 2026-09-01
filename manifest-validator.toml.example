@@ -22,11 +22,6 @@ require-pinned = true
 [[check]]
 name = "kics"
 kind = "kics"
-# Report the findings without failing the verdict, for a check whose findings
-# have not been worked through yet: relcoord comments them on the pull request
-# and deploys anyway. Delete this line to gate on it. A check left advisory
-# indefinitely is one nobody is acting on.
-advisory = true
 # A generated manifest tree holds neither CloudFormation nor Dockerfiles, and
 # each type costs scan time for no findings.
 types = ["Kubernetes", "Crossplane"]
