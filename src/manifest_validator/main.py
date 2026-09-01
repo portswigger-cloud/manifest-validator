@@ -62,7 +62,6 @@ def main(config_path: Path) -> None:
         build_checkers(settings),
         max_concurrent=settings.max_concurrent,
         default_checks=settings.default_check_names,
-        advisory_checks=settings.advisory_check_names,
     )
     app = create_app(service)
 

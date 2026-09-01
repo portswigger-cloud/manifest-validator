@@ -97,9 +97,6 @@ The response aggregates one verdict per check:
 }
 ```
 
-`advisory` says the check reports its findings without failing the verdict, so a
-caller showing them to a person can say they blocked nothing.
-
 `accepted` is null when a finding fails the verdict, and otherwise the reason it
 does not. `similarity_id` is reported so a one-off suppression can be written
 from the verdict rather than by re-running the scanner by hand.
@@ -180,31 +177,6 @@ Three kinds, all behind one `Checker` seam:
   for, without manufacturing failures on a schedule unrelated to whether
   anything changed — and without failing a build because someone fixed the thing
   upstream.
-
-## Advisory checks
-
-`advisory = true` on a `[[check]]` makes it report without failing the verdict.
-Every finding is reported and `passed` stays true, so relcoord comments them on
-the pull request and deploys anyway.
-
-That is what a check needs while its findings are being worked through. The
-alternative is a choice between gating on findings nobody has triaged, which
-stops every deployment, and leaving the check out, which means never seeing
-them. Neither gets a noisy check into use.
-
-It lives here rather than in relcoord's config for the same reason the rulesets
-do: whether a finding stops a deployment is this service's decision. relcoord
-gates on `passed` and never recomputes it, so a check can be promoted to gating,
-or demoted while a regression is dealt with, by editing this file alone — no
-change to the caller and no new image for it.
-
-An advisory check that cannot run does not fail closed, because there is nothing
-to fail closed on: nothing is gated on it either way. Its `check-error` finding
-is still reported.
-
-A check left advisory indefinitely is one nobody is acting on. Nothing here can
-enforce that, which is why the flag reads as a state a check passes through
-rather than a mode it lives in.
 
 A check that raises fails closed and reports a `check-error` finding. A `kics`
 check whose output cannot be parsed fails rather than passing: a green verdict

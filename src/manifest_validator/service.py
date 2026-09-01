@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
 
 from manifest_validator.checks import Checker, ProgressSink
 from manifest_validator.errors import UnknownCheck
@@ -54,13 +53,11 @@ class ValidationService:
         cache: VerdictCache | None = None,
         max_concurrent: int = 4,
         default_checks: Sequence[str] | None = None,
-        advisory_checks: Sequence[str] | None = None,
     ) -> None:
         self._checkers = dict(checkers)
         self._cache = cache if cache is not None else VerdictCache()
         self._slots = threading.BoundedSemaphore(max_concurrent)
         self._default_checks = tuple(default_checks or sorted(self._checkers))
-        self._advisory_checks = frozenset(advisory_checks or ())
 
     @property
     def check_names(self) -> tuple[str, ...]:
@@ -89,7 +86,7 @@ class ValidationService:
         progress("validate", f"{len(tree)} files, checks: {', '.join(requested)}")
         with self._slots:
             verdicts = tuple(
-                self._verdict_for(name, digest, tree, progress) for name in requested
+                self._run_one(name, digest, tree, progress) for name in requested
             )
 
         self._cache.put(digest, cache_key, verdicts)
@@ -99,28 +96,6 @@ class ValidationService:
             f"{sum(len(v.findings) for v in verdicts)} findings",
         )
         return result
-
-    def _verdict_for(
-        self, name: str, digest: str, tree: Tree, progress: ProgressSink
-    ) -> Verdict:
-        """Run one check and decide whether its findings fail the verdict.
-
-        A check whose findings do not fail is configured that way here rather
-        than judged that way by the caller: relcoord gates on ``passed`` and
-        never recomputes it, so this is where a check can report without
-        stopping a deployment. It covers the check-error path too — an advisory
-        check that cannot run has nothing to fail closed, since nothing is
-        gated on it either way.
-        """
-        verdict = self._run_one(name, digest, tree, progress)
-        if name not in self._advisory_checks:
-            return verdict
-        findings = len(verdict.findings)
-        progress(
-            "advisory",
-            f"{name}: {findings} finding{'' if findings == 1 else 's'}, not gated",
-        )
-        return replace(verdict, passed=True, advisory=True)
 
     def _run_one(
         self, name: str, digest: str, tree: Tree, progress: ProgressSink
