@@ -24,11 +24,7 @@ dev = [
   "pytest",
   "ty",
   "ruff",
-  "bktools",
 ]
-
-[[tool.uv.index]]
-url = "https://repo.noa.re/"
 
 [project.scripts]
 manifest-validator = "manifest_validator.main:main"

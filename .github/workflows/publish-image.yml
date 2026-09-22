@@ -22,19 +22,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        run: uv python install
-
       - name: Compute Docker image tag
         id: image-version
         run: |
-          image_version="$(uv run --locked --group dev bktools-image-version-hash)"
-          echo "tag=public.ecr.aws/q3z6g1h3/manifest-validator:${image_version}" >> "$GITHUB_OUTPUT"
+          echo "tag=public.ecr.aws/q3z6g1h3/manifest-validator:${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
 
       # TODO: this role does not exist yet. It needs creating in CDK alongside
       # relcoord's, with a trust policy for this repository.

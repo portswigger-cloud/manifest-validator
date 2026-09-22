@@ -3,15 +3,17 @@
 Validates generated Kubernetes manifest trees before they are pushed to a
 manifests repository, and returns a verdict that the caller can gate on.
 
-relcoord generates a tree, POSTs it here with a content digest, and pushes only
-on a green verdict. This service owns which tools run, the tool versions, the
-rulesets and the pass/fail decision; relcoord reads `passed` and knows nothing
-else. Callers name checks, they never describe them, so no request can choose a
-command to execute.
+Its one caller is relcoord, the PortSwigger-internal service that renders our
+Kubernetes manifests and commits them. relcoord generates a tree, POSTs it here
+with a content digest, and pushes only on a green verdict. This service owns
+which tools run, the tool versions, the rulesets and the pass/fail decision;
+relcoord reads `passed` and knows nothing else. Callers name checks, they never
+describe them, so no request can choose a command to execute.
 
-Companion to the design at `pipeline-design.md`; the as-is pipeline is recorded
-at
-<https://portswigger.atlassian.net/wiki/spaces/tech/pages/1496350731/Security+Scanning+in+the+Deployment+Pipelines>.
+This is published because it is useful to read, not because it is a product: it
+is built for one pipeline, the configuration encodes our policy, and the caller
+it is designed around is not public. Expect to fork rather than adopt.
+Contributions are welcome within that shape — see `CONTRIBUTING.md`.
 
 ## Shape
 
@@ -193,10 +195,10 @@ KICS is copied into this image at build time, binary and query library both, so
 a validation pulls nothing at all and a cold node costs nothing beyond this
 image.
 
-From Docker Hub, as `portswigger-cloud/github-actions/actions/kics-scan`
-already does. Checkmarx is not a Verified Publisher, so anonymous pulls count
-against the per-IP limit; that workflow passes a `DOCKER_TOKEN` and this build
-should too.
+From Docker Hub, anonymously. Checkmarx is not a Verified Publisher, so those
+pulls count against the per-IP limit and the publish job can be rate-limited on
+a shared runner; a Docker Hub token in the build would fix it, at the cost of a
+credential in a workflow that currently needs none.
 
 The `Dockerfile` pin is the only place the version is stated. A verdict reports
 what the report says ran, so the two cannot disagree.
@@ -213,13 +215,14 @@ uv run --locked --group dev ruff format --check
 uv run --locked --group dev ty check
 ```
 
-CI runs exactly those four checks. Python >= 3.14; `bktools` comes from the
-private index `https://repo.noa.re/`.
+CI runs exactly those four checks. Python >= 3.14, and every dependency is on
+PyPI, so a clean clone needs no credentials.
 
 ## Not done yet
 
-- **ECR publish role:** Crossplane in `system/platform/manifest-validator/extra/`,
-  not CDK. Nothing exists in AWS until that PR merges and Argo syncs.
+- **ECR publish role:** declared as Crossplane resources in our internal
+  `system` repository, not in CDK. Nothing exists in AWS until that PR merges
+  and Argo syncs.
 - **Image tag is `REPLACE_ME`.** It passes `image-policy` — the rule rejects
   `latest` and unpinned refs, not placeholders.
 - **`ruleset-digest` for the KICS check is a placeholder.** It should be computed

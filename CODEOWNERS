@@ -1,0 +1,9 @@
+# Platform / technology team (admins) own everything by default.
+# Required by the org default-branch ruleset so newly added org members cannot
+# self-approve changes, and so a fork's pull request cannot land unreviewed.
+*   @portswigger-cloud/admins
+
+# The KICS exception list is the one place where review *is* the control: an
+# exception says a finding was read and accepted. The deployed list lives in the
+# `system` repository and wants the same entry there.
+/manifest-validator.toml.example   @portswigger-cloud/admins

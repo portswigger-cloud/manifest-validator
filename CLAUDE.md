@@ -14,10 +14,10 @@ uv run --locked --group dev ruff format --check
 uv run --locked --group dev ty check
 ```
 
-CI (`.github/workflows/pr-checks.yml`) runs exactly those four. Python >= 3.14;
-`bktools` comes from the private index `https://repo.noa.re/`. The lint rule set
-is pinned in `pyproject.toml` so a user-level ruff config cannot disagree with
-CI.
+CI (`.github/workflows/pr-checks.yml`) runs exactly those four. Python >= 3.14,
+and every dependency is on PyPI — this repo is public, so do not add one that
+is not. The lint rule set is pinned in `pyproject.toml` so a user-level ruff
+config cannot disagree with CI.
 
 ## What the service does
 
