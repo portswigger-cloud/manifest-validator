@@ -472,3 +472,19 @@ def test_a_kics_other_than_the_one_built_in_is_not_remembered() -> None:
     checker.run(DIGEST, SOURCED_TREE, _noop)
     assert len(runner.scanned) == 2
     assert first.tool_version == "v2.1.20", "the verdict names what actually ran"
+
+
+def test_findings_come_out_in_the_same_order_however_kics_reported_them() -> None:
+    first = _finding(
+        "relcoord/deployment-relcoord.yaml", query_id="b", similarity_id="s1"
+    )
+    second = _finding(
+        "relcoord/deployment-relcoord.yaml", query_id="a", similarity_id="s2"
+    )
+
+    def order(*queries: dict[str, Any]) -> list[str]:
+        runner = StubRunner(exit_code=50, report=_report(list(queries)))
+        verdict = _checker(runner).run(DIGEST, SOURCED_TREE, _noop)
+        return [f.rule_id for f in verdict.findings]
+
+    assert order(first, second) == order(second, first) == ["a", "b"]

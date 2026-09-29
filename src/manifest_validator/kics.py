@@ -271,21 +271,25 @@ def _findings(
                 )
             ),
         )
-    results = [
-        KicsResult(
-            Finding(
-                rule_id=str(query.get("query_id", f"{check_name}/unknown")),
-                severity=_severity(str(query.get("severity", "info")).lower()),
-                message=str(query.get("description", query.get("query_name", ""))),
-                file=location.get("file_name"),
-                resource=location.get("resource_name"),
-                similarity_id=location.get("similarity_id"),
-            ),
-            query_name=str(query.get("query_name", "")),
-        )
-        for query in report.get("queries", [])
-        for location in query.get("files", [])
-    ]
+    # KICS reports in a different order from run to run.
+    results = sorted(
+        (
+            KicsResult(
+                Finding(
+                    rule_id=str(query.get("query_id", f"{check_name}/unknown")),
+                    severity=_severity(str(query.get("severity", "info")).lower()),
+                    message=str(query.get("description", query.get("query_name", ""))),
+                    file=location.get("file_name"),
+                    resource=location.get("resource_name"),
+                    similarity_id=location.get("similarity_id"),
+                ),
+                query_name=str(query.get("query_name", "")),
+            )
+            for query in report.get("queries", [])
+            for location in query.get("files", [])
+        ),
+        key=_report_order,
+    )
     if not results and exit_code != 0:
         results.append(
             KicsResult(
@@ -334,6 +338,17 @@ def _classify(
         if index not in matched
     )
     return tuple(classified)
+
+
+def _report_order(result: KicsResult) -> tuple[str, ...]:
+    f = result.finding
+    return (
+        f.file or "",
+        f.rule_id,
+        f.resource or "",
+        f.similarity_id or "",
+        f.message,
+    )
 
 
 def _read_report(path: Path) -> dict[str, Any] | None:
