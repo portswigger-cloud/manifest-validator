@@ -24,7 +24,7 @@ dependencies = [
     { name = "pyyaml" },
 ]
 wheels = [
-    { url = "https://repo.noa.re/bktools/bktools-0.3.0.post9%2Bg0990a48c1-py3-none-any.whl", hash = "sha256:8aba5fbb83cdd882c2f8738e8746912fc25450685c7424186de588073980cade", size = 22858 },
+    { url = "https://repo.noa.re/bktools/bktools-0.3.0.post9%2Bg0990a48c1-py3-none-any.whl", hash = "sha256:ad975a680143e4a3036053ee218174ca4bf0ab61c9a9e00346d71d864526085d", size = 25788 },
 ]
 
 [[package]]
