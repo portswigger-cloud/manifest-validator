@@ -12,7 +12,7 @@ max-concurrent = 4
 # only this service may write to it: an entry is a file's findings, so a forged
 # one hides them. region-name and endpoint-url default to the AWS environment.
 # [scan-cache]
-# table-name = "platform-manifest-validator-scans"
+# table-name = "manifest-validator-scans"
 # ttl-days = 30
 
 # Cheap, deterministic and in-process: every document parses and carries
