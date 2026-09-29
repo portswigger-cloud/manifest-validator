@@ -1,3 +1,8 @@
+# Checkmarx is not a Verified Publisher, so anonymous pulls count against the
+# per-IP limit; authenticate with DOCKER_TOKEN as the kics-scan action does.
+# v2.1.20 is the newest tag with an image — the v2.1.21 release has none.
+ARG KICS_VERSION=v2.1.20
+
 FROM astral/uv:trixie-slim AS builder
 
 WORKDIR /build
@@ -13,12 +18,12 @@ RUN uv build --wheel
 ENV VIRTUAL_ENV=/venv
 RUN uv venv /venv && uv pip install --no-deps dist/*.whl
 
-# Checkmarx is not a Verified Publisher, so anonymous pulls count against the
-# per-IP limit; authenticate with DOCKER_TOKEN as the kics-scan action does.
-# v2.1.20 is the newest tag with an image — the v2.1.21 release has none.
-FROM checkmarx/kics:v2.1.20 AS kics
+FROM checkmarx/kics:${KICS_VERSION} AS kics
 
 FROM gcr.io/distroless/cc-debian13
+ARG KICS_VERSION
+# Remembered findings are keyed on it, and the key has to exist before a scan.
+ENV KICS_VERSION=${KICS_VERSION}
 
 COPY --from=builder /python /python
 COPY --from=builder /deps-venv /venv

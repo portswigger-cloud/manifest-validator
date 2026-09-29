@@ -159,6 +159,27 @@ Three kinds, all behind one `Checker` seam:
   `tool_version` is read from the report KICS wrote, so a verdict cannot name a
   version that did not produce it.
 
+  KICS only scans files that changed since it last saw them. Its findings are
+  remembered per file, keyed on path and content, and a tree that differs by
+  one file costs a scan of one file. This relies on every query judging a file
+  on its own; a query that reads across files would make a partial scan wrong.
+  Exceptions are applied after the remembered findings are merged back in, so
+  changing them takes effect on the next request. A scan that fails is never
+  remembered.
+
+  Findings are remembered in DynamoDB when `[scan-cache]` names a table, so a
+  restart or the other replica does not rescan, and otherwise in memory. The key
+  also covers the KICS version and the ruleset selection, so an upgrade starts
+  from nothing. The version has to be known before a scan, so the image sets
+  `KICS_VERSION` from the same build argument that chooses the KICS image;
+  without it, nothing is remembered. A report naming a different version is still
+  used for its verdict but not stored.
+
+  The table has a string hash key `pk` and TTL on `expires`. Anything that can
+  write to it can make a finding disappear, so only this service's role may. A
+  table that cannot be reached reads as empty: it costs a full scan, never a
+  verdict.
+
   Which findings fail is a policy, and the policy is expressed here rather than
   in KICS's own `--exclude-*` flags: anything excluded there vanishes from the
   report, so the verdict could not say what it tolerated. Every finding is
@@ -198,7 +219,7 @@ already does. Checkmarx is not a Verified Publisher, so anonymous pulls count
 against the per-IP limit; that workflow passes a `DOCKER_TOKEN` and this build
 should too.
 
-The `Dockerfile` pin is the only place the version is stated. A verdict reports
+The `Dockerfile`'s `KICS_VERSION` argument is the only place the version is stated. A verdict reports
 what the report says ran, so the two cannot disagree.
 
 ## Development

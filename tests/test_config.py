@@ -195,3 +195,28 @@ def test_exceptions_are_meaningless_on_a_non_kics_check() -> None:
                 ]
             }
         )
+
+
+def test_scans_are_remembered_in_memory_unless_a_table_is_named() -> None:
+    assert Settings.from_mapping(MINIMAL).scan_cache is None
+
+
+def test_a_scan_cache_table_is_read() -> None:
+    settings = Settings.from_mapping(
+        MINIMAL | {"scan-cache": {"table-name": "t", "ttl-days": 7}}
+    )
+    assert settings.scan_cache is not None
+    assert settings.scan_cache.table_name == "t"
+    assert settings.scan_cache.ttl_days == 7
+
+
+def test_a_scan_cache_without_a_table_is_rejected() -> None:
+    with pytest.raises(ValueError, match="table-name"):
+        Settings.from_mapping(MINIMAL | {"scan-cache": {}})
+
+
+def test_a_scan_cache_ttl_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="ttl-days"):
+        Settings.from_mapping(
+            MINIMAL | {"scan-cache": {"table-name": "t", "ttl-days": 0}}
+        )
