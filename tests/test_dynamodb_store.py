@@ -44,10 +44,15 @@ class FakeDynamoDBClient:
 
 
 class Unreachable:
+    def __init__(self) -> None:
+        self.calls = 0
+
     def batch_get_item(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls += 1
         raise EndpointConnectionError(endpoint_url="https://dynamodb")
 
     def batch_write_item(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls += 1
         raise EndpointConnectionError(endpoint_url="https://dynamodb")
 
 
@@ -105,3 +110,13 @@ def test_an_unreachable_table_behaves_as_empty_rather_than_failing() -> None:
     store = _store(Unreachable())
     store.put_many({"k": "v"})
     assert store.get_many(["k"]) == {}
+
+
+def test_an_unreachable_table_is_given_up_on_after_one_call() -> None:
+    """Each failed call costs seconds; a tree would otherwise make a dozen."""
+    client = Unreachable()
+    store = _store(client)
+    keys = [f"k{i}" for i in range(230)]
+    store.get_many(keys)
+    store.put_many(dict.fromkeys(keys, "v"))
+    assert client.calls == 2
