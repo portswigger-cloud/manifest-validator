@@ -11,6 +11,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.14"
 dependencies = [
+  "boto3",
   "click",
   "hypercorn",
   "pyyaml",

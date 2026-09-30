@@ -11,7 +11,7 @@ import pytest
 from manifest_validator.commands import CommandOutcome, SubprocessRunner, write_tree
 from manifest_validator.config import PolicyException
 from manifest_validator.errors import CheckTimeout, MalformedTree
-from manifest_validator.kics import KicsChecker
+from manifest_validator.kics import KicsChecker, KicsScanner
 from manifest_validator.models import Tree
 
 DIGEST = "sha256:" + "a" * 64
@@ -50,8 +50,18 @@ class StubRunner:
         return CommandOutcome(exit_code=self._exit_code, stdout="")
 
 
-def _checker(runner: object, **kwargs: object) -> KicsChecker:
-    return KicsChecker(**({"check_name": "kics", "runner": runner} | kwargs))  # ty: ignore
+def _checker(
+    runner: object,
+    *,
+    exceptions: tuple[PolicyException, ...] = (),
+    **scanner: tuple[str, ...] | str,
+) -> KicsChecker:
+    return KicsChecker(
+        scanner=KicsScanner(
+            **({"check_name": "kics", "runner": runner, "version": "v2.1.20"} | scanner)  # ty: ignore
+        ),
+        exceptions=exceptions,
+    )
 
 
 def _report(
@@ -146,12 +156,18 @@ def test_the_version_is_the_one_that_produced_the_report() -> None:
 
 
 def test_the_ruleset_digest_follows_version_and_selection() -> None:
-    def digest(**kwargs: object) -> str:
-        return (
-            _checker(StubRunner(report=_report()), **kwargs)
-            .run(DIGEST, TREE, _noop)
-            .ruleset_digest
+    def digest(
+        types: tuple[str, ...],
+        exclude_severities: tuple[str, ...] = (),
+        exclude_queries: tuple[str, ...] = (),
+    ) -> str:
+        checker = _checker(
+            StubRunner(report=_report()),
+            types=types,
+            exclude_severities=exclude_severities,
+            exclude_queries=exclude_queries,
         )
+        return checker.run(DIGEST, TREE, _noop).ruleset_digest
 
     base = digest(types=("Kubernetes",))
     assert digest(types=("Kubernetes",)) == base
@@ -351,6 +367,124 @@ def test_the_command_runs_without_a_shell() -> None:
     assert outcome.stdout.strip() == "$HOME; ls"
 
 
+class FlagsEveryFile:
+    """Reports one finding per file it was given, as KICS would per-file."""
+
+    def __init__(self) -> None:
+        self.scanned: list[list[str]] = []
+
+    def run(
+        self, argv: tuple[str, ...], cwd: Path, timeout_seconds: int
+    ) -> CommandOutcome:
+        files = sorted(str(p.relative_to(cwd)) for p in cwd.rglob("*") if p.is_file())
+        self.scanned.append(files)
+        output = _flag(argv, "--output-path")
+        assert output is not None
+        report = _report([_finding(f, similarity_id=f"sim-{f}") for f in files])
+        Path(output, "results.json").write_text(json.dumps(report))
+        return CommandOutcome(exit_code=50 if files else 0, stdout="")
+
+
+def test_only_changed_files_are_scanned_again() -> None:
+    runner = FlagsEveryFile()
+    checker = _checker(runner)
+    checker.run(DIGEST, SOURCED_TREE, _noop)
+    changed = Tree(
+        files={**SOURCED_TREE.files, "argo/namespace-argo.yaml": b"kind: Namespace\n"}
+    )
+    partial = checker.run(DIGEST, changed, _noop)
+    assert runner.scanned[-1] == ["argo/namespace-argo.yaml"]
+    assert partial == _checker(FlagsEveryFile()).run(DIGEST, changed, _noop)
+
+
+def test_exceptions_apply_to_findings_remembered_from_an_earlier_scan() -> None:
+    runner = FlagsEveryFile()
+    checker = _checker(
+        runner,
+        exceptions=(
+            PolicyException(source="crossplane", query="abc-123", reason="agg"),
+        ),
+    )
+    checker.run(DIGEST, SOURCED_TREE, _noop)
+    verdict = checker.run(DIGEST, SOURCED_TREE, _noop)
+    assert len(runner.scanned) == 1
+    assert [f.accepted for f in verdict.findings] == [None, "agg", None]
+
+
+def test_a_crashed_scan_is_not_remembered_as_clean() -> None:
+    checker = _checker(StubRunner(exit_code=126))
+    checker.run(DIGEST, TREE, _noop)
+    verdict = checker.run(DIGEST, TREE, _noop)
+    assert not verdict.passed
+    assert verdict.findings[0].rule_id == "kics/unparseable-output"
+
+
 def test_the_similarity_id_is_reported_so_a_suppression_can_be_written() -> None:
     verdict = _run(_report([OUR_ESCALATION]))
     assert verdict.findings[0].similarity_id == "sim-2"
+
+
+def test_the_cache_identity_follows_version_and_selection() -> None:
+    def identity(**kwargs: Any) -> str | None:
+        return KicsScanner(
+            check_name="kics", runner=StubRunner(), **kwargs
+        ).cache_identity
+
+    base = identity(version="v2.1.20", types=("Kubernetes",))
+    assert base == identity(version="v2.1.20", types=("Kubernetes",))
+    assert base != identity(version="v2.1.21", types=("Kubernetes",))
+    assert base != identity(version="v2.1.20", types=("Crossplane",))
+    assert base != identity(
+        version="v2.1.20", types=("Kubernetes",), exclude_queries=(QUERY_ID,)
+    )
+    assert identity(types=("Kubernetes",)) is None
+
+
+def test_an_exclusion_cannot_pass_for_a_type() -> None:
+    def identity(**kwargs: Any) -> str | None:
+        return KicsScanner(
+            check_name="kics", runner=StubRunner(), version="v1", **kwargs
+        ).cache_identity
+
+    assert identity(types=("high",)) != identity(exclude_severities=("high",))
+
+
+def test_a_result_survives_encoding() -> None:
+    scanner = KicsScanner(
+        check_name="kics", runner=StubRunner(exit_code=50, report=_report([HIGH]))
+    )
+    [result] = scanner.scan(TREE, _noop).findings
+    assert scanner.decode(json.loads(json.dumps(scanner.encode(result)))) == result
+
+
+def test_findings_are_remembered_when_the_built_in_kics_ran() -> None:
+    runner = FlagsEveryFile()
+    checker = _checker(runner, version="v2.1.20")
+    checker.run(DIGEST, SOURCED_TREE, _noop)
+    checker.run(DIGEST, SOURCED_TREE, _noop)
+    assert len(runner.scanned) == 1
+
+
+def test_a_kics_other_than_the_one_built_in_is_not_remembered() -> None:
+    runner = FlagsEveryFile()
+    checker = _checker(runner, version="v9.9.9")
+    first = checker.run(DIGEST, SOURCED_TREE, _noop)
+    checker.run(DIGEST, SOURCED_TREE, _noop)
+    assert len(runner.scanned) == 2
+    assert first.tool_version == "v2.1.20", "the verdict names what actually ran"
+
+
+def test_findings_come_out_in_the_same_order_however_kics_reported_them() -> None:
+    first = _finding(
+        "relcoord/deployment-relcoord.yaml", query_id="b", similarity_id="s1"
+    )
+    second = _finding(
+        "relcoord/deployment-relcoord.yaml", query_id="a", similarity_id="s2"
+    )
+
+    def order(*queries: dict[str, Any]) -> list[str]:
+        runner = StubRunner(exit_code=50, report=_report(list(queries)))
+        verdict = _checker(runner).run(DIGEST, SOURCED_TREE, _noop)
+        return [f.rule_id for f in verdict.findings]
+
+    assert order(first, second) == order(second, first) == ["a", "b"]

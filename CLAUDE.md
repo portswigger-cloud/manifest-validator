@@ -46,6 +46,15 @@ need a `system` PR, a regeneration, an Argo sync and a pod restart.
   config that could move them could point the scan at a query set inside the
   tree being scanned. The tool runs with this service's privileges: acceptable
   only while every tool is offline and unauthenticated, as KICS is.
+- `scan_cache.py` — `FileScanCache`, which remembers a `Scanner`'s findings per
+  file (scanner identity, path and content) and scans only what changed.
+  Tool-agnostic; valid only for a scanner whose findings for a file depend on
+  that file alone. A scanner supplies its identity and an encoding; entries go
+  to one `ScanStore` — DynamoDB when configured, else `MemoryScanStore`. `kics.py` splits into `KicsScanner`
+  (runs the tool) and `KicsChecker` (applies exceptions after the cache, so
+  policy is never cached).
+- `dynamodb_store.py` — the `ScanStore` behind `[scan-cache]`. Unreachable reads
+  as empty; it must never fail a check.
 - `service.py` — verifies the claimed digest, checks `VerdictCache`, runs the
   checks, aggregates. A check that raises fails closed with a `check-error`
   finding. A finding is either accepted, with the reason it was, or it fails the

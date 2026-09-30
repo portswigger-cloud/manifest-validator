@@ -6,6 +6,15 @@ bind-address = "0.0.0.0:8080"
 # How many validations may run at once.
 max-concurrent = 4
 
+# Remember scanners' per-file findings in DynamoDB, so a restart or another
+# replica does not rescan unchanged files. Without it they are remembered in
+# memory only. The table needs a string hash key `pk` and TTL on `expires`, and
+# only this service may write to it: an entry is a file's findings, so a forged
+# one hides them. region-name and endpoint-url default to the AWS environment.
+# [scan-cache]
+# table-name = "manifest-validator-cache"
+# ttl-days = 30
+
 # Cheap, deterministic and in-process: every document parses and carries
 # apiVersion, kind and metadata.name.
 [[check]]

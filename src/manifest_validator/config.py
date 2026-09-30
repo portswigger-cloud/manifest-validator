@@ -155,10 +155,40 @@ class CheckConfig:
 
 
 @dataclass(frozen=True)
+class ScanCacheSettings:
+    """Where scanners' findings are remembered beyond this process.
+
+    Without it they are remembered in memory, and a restart rescans everything.
+    """
+
+    table_name: str
+    region_name: str | None = None
+    endpoint_url: str | None = None
+    ttl_days: int = 30
+
+    @classmethod
+    def from_mapping(cls, data: dict[str, Any]) -> ScanCacheSettings:
+        where = "scan-cache"
+        table_name = _optional_string(data, "table-name", where)
+        if table_name is None:
+            raise ValueError(f"{where}.table-name is required")
+        ttl_days = _int(data, "ttl-days", cls.ttl_days)
+        if ttl_days <= 0:
+            raise ValueError(f"{where}.ttl-days must be positive")
+        return cls(
+            table_name=table_name,
+            region_name=_optional_string(data, "region-name", where),
+            endpoint_url=_optional_string(data, "endpoint-url", where),
+            ttl_days=ttl_days,
+        )
+
+
+@dataclass(frozen=True)
 class Settings:
     bind_address: str = "0.0.0.0:8080"
     max_concurrent: int = 4
     checks: tuple[CheckConfig, ...] = ()
+    scan_cache: ScanCacheSettings | None = None
 
     @classmethod
     def from_path(cls, path: Path) -> Settings:
@@ -180,10 +210,18 @@ class Settings:
         max_concurrent = _int(data, "max-concurrent", cls.max_concurrent)
         if max_concurrent <= 0:
             raise ValueError("max-concurrent must be positive")
+        scan_cache = data.get("scan-cache")
+        if scan_cache is not None and not isinstance(scan_cache, dict):
+            raise ValueError("scan-cache must be a table")
         return cls(
             bind_address=_string(data, "bind-address", cls.bind_address),
             max_concurrent=max_concurrent,
             checks=checks,
+            scan_cache=(
+                ScanCacheSettings.from_mapping(scan_cache)
+                if scan_cache is not None
+                else None
+            ),
         )
 
     @property
