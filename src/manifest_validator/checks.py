@@ -8,13 +8,9 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-import yaml
-
 from manifest_validator.models import Finding, Tree, Verdict
 
 logger = logging.getLogger(__name__)
-
-MANIFEST_SUFFIXES = (".yaml", ".yml")
 
 
 class ProgressSink(Protocol):
@@ -32,22 +28,6 @@ class Checker(Protocol):
     def name(self) -> str: ...
 
     def run(self, digest: str, tree: Tree, progress: ProgressSink) -> Verdict: ...
-
-
-def _documents(tree: Tree) -> Iterator[tuple[str, int, Any | None, str | None]]:
-    """Yield (path, index, document, parse_error) for every manifest document."""
-    for path in sorted(tree.files):
-        if not path.endswith(MANIFEST_SUFFIXES):
-            continue
-        raw = tree.files[path]
-        try:
-            # libyaml: the pure-Python loader was most of a validation's time.
-            documents = list(yaml.load_all(raw, Loader=yaml.CSafeLoader))
-        except yaml.YAMLError as exc:
-            yield path, 0, None, str(exc)
-            continue
-        for index, document in enumerate(documents):
-            yield path, index, document, None
 
 
 def _ruleset_digest(*parts: str) -> str:
@@ -73,7 +53,7 @@ class StructuralChecker:
     def run(self, digest: str, tree: Tree, progress: ProgressSink) -> Verdict:
         progress("running", f"structural: {len(tree)} files")
         findings: list[Finding] = []
-        for path, index, document, parse_error in _documents(tree):
+        for path, index, document, parse_error in tree.documents:
             resource = f"{path}#{index}"
             if parse_error is not None:
                 findings.append(
@@ -150,7 +130,7 @@ class ImagePolicyChecker:
     def run(self, digest: str, tree: Tree, progress: ProgressSink) -> Verdict:
         progress("running", f"image-policy: {len(tree)} files")
         findings: list[Finding] = []
-        for path, index, document, parse_error in _documents(tree):
+        for path, index, document, parse_error in tree.documents:
             if parse_error is not None or not isinstance(document, dict):
                 continue
             for reference in _image_references(document):

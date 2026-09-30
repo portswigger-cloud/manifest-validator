@@ -2,6 +2,11 @@
 # SPDX-FileCopyrightText: 2026 PortSwigger Ltd
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
+import yaml
+
 from manifest_validator.checks import ImagePolicyChecker, StructuralChecker
 from manifest_validator.models import Tree
 
@@ -143,3 +148,20 @@ def test_image_policy_finds_images_nested_in_custom_resources() -> None:
     )
     checker = ImagePolicyChecker(allowed_registries=("public.ecr.aws/",))
     assert not checker.run(DIGEST, tree, _noop).passed
+
+
+def test_both_checks_share_one_parse_of_the_tree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loads: list[bytes] = []
+    real = yaml.load_all
+
+    def counting(stream: bytes, Loader: Any) -> Any:  # noqa: N803
+        loads.append(stream)
+        return real(stream, Loader=Loader)
+
+    monkeypatch.setattr(yaml, "load_all", counting)
+    tree = Tree(files={"a.yaml": b"kind: A\n", "b.yml": b"kind: B\n", "c.txt": b"x"})
+    StructuralChecker().run("", tree, _noop)
+    ImagePolicyChecker(allowed_registries=()).run("", tree, _noop)
+    assert sorted(loads) == [b"kind: A\n", b"kind: B\n"]
