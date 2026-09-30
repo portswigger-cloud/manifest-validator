@@ -4,11 +4,19 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Any, Literal
+
+import yaml
 
 Severity = Literal["critical", "high", "medium", "low", "info"]
 
 SEVERITY_ORDER: tuple[Severity, ...] = ("critical", "high", "medium", "low", "info")
+
+MANIFEST_SUFFIXES = (".yaml", ".yml")
+
+type Document = tuple[str, int, Any | None, str | None]
+"""(path, index, document, parse_error) for one document in a manifest file."""
 
 
 @dataclass(frozen=True)
@@ -95,3 +103,23 @@ class Tree:
 
     def __len__(self) -> int:
         return len(self.files)
+
+    @cached_property
+    def documents(self) -> tuple[Document, ...]:
+        """Every manifest document, parsed once however many checks read it."""
+        parsed: list[Document] = []
+        for path in sorted(self.files):
+            if not path.endswith(MANIFEST_SUFFIXES):
+                continue
+            try:
+                # libyaml: the pure-Python loader was most of a validation's time.
+                documents = list(
+                    yaml.load_all(self.files[path], Loader=yaml.CSafeLoader)
+                )
+            except yaml.YAMLError as exc:
+                parsed.append((path, 0, None, str(exc)))
+                continue
+            parsed.extend(
+                (path, index, doc, None) for index, doc in enumerate(documents)
+            )
+        return tuple(parsed)
