@@ -41,7 +41,8 @@ def _documents(tree: Tree) -> Iterator[tuple[str, int, Any | None, str | None]]:
             continue
         raw = tree.files[path]
         try:
-            documents = list(yaml.safe_load_all(raw))
+            # libyaml: the pure-Python loader was most of a validation's time.
+            documents = list(yaml.load_all(raw, Loader=yaml.CSafeLoader))
         except yaml.YAMLError as exc:
             yield path, 0, None, str(exc)
             continue
