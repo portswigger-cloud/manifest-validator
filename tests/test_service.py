@@ -2,6 +2,9 @@
 # SPDX-FileCopyrightText: 2026 PortSwigger Ltd
 from __future__ import annotations
 
+import itertools
+from collections.abc import Callable
+
 import pytest
 
 from manifest_validator.checks import ProgressSink
@@ -54,6 +57,12 @@ class ExplodingChecker:
 def _service(*checkers: object) -> ValidationService:
     mapping = {c.name: c for c in checkers}  # ty: ignore
     return ValidationService(mapping)  # ty: ignore
+
+
+def _ticking_clock(step: float) -> Callable[[], float]:
+    """A clock that advances by `step` every time it is read."""
+    readings = itertools.count(step=step)
+    return lambda: next(readings)
 
 
 def _events() -> tuple[list[tuple[str, str]], ProgressSink]:
@@ -127,6 +136,37 @@ def test_progress_ends_on_a_terminal_phase() -> None:
     seen, sink = _events()
     service.validate(compute_digest(FILES), FILES, sink)
     assert seen[-1][0] == "validation-failed"
+
+
+def test_each_check_reports_how_long_it_took() -> None:
+    service = ValidationService(
+        {"one": StubChecker("one"), "two": StubChecker("two", passed=False)},
+        clock=_ticking_clock(1.5),
+    )
+    seen, sink = _events()
+    result = service.validate(compute_digest(FILES), FILES, sink)
+    assert [v.duration_seconds for v in result.verdicts] == [1.5, 1.5]
+    assert ("checked", "one: passed in 1.5s") in seen
+    assert ("checked", "two: failed in 1.5s") in seen
+    assert seen[-1] == ("validation-failed", "1 findings in 7.5s")
+
+
+def test_a_check_that_raises_still_reports_its_duration() -> None:
+    service = ValidationService({"boom": ExplodingChecker()}, clock=_ticking_clock(2))
+    seen, sink = _events()
+    result = service.validate(compute_digest(FILES), FILES, sink)
+    assert result.verdicts[0].duration_seconds == 2
+    assert ("checked", "boom: failed in 2.0s") in seen
+
+
+def test_a_cached_verdict_carries_the_duration_of_the_run_that_made_it() -> None:
+    service = ValidationService({"one": StubChecker("one")}, clock=_ticking_clock(1))
+    _, sink = _events()
+    digest = compute_digest(FILES)
+    service.validate(digest, FILES, sink)
+    cached = service.validate(digest, FILES, sink)
+    assert cached.cached
+    assert cached.as_dict()["verdicts"][0]["duration_seconds"] == 1
 
 
 def _discard(phase: str, message: str) -> None:

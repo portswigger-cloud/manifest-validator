@@ -2,9 +2,11 @@
 # SPDX-FileCopyrightText: 2026 PortSwigger Ltd
 from __future__ import annotations
 
+import dataclasses
 import logging
 import threading
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Callable, Mapping, Sequence
 
 from manifest_validator.checks import Checker, ProgressSink
 from manifest_validator.errors import UnknownCheck
@@ -53,11 +55,13 @@ class ValidationService:
         cache: VerdictCache | None = None,
         max_concurrent: int = 4,
         default_checks: Sequence[str] | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._checkers = dict(checkers)
         self._cache = cache if cache is not None else VerdictCache()
         self._slots = threading.BoundedSemaphore(max_concurrent)
         self._default_checks = tuple(default_checks or sorted(self._checkers))
+        self._clock = clock
 
     @property
     def check_names(self) -> tuple[str, ...]:
@@ -82,6 +86,7 @@ class ValidationService:
             progress("validated", f"cached verdict for {digest}")
             return ValidationResult(digest=digest, verdicts=cached, cached=True)
 
+        started = self._clock()
         tree = Tree(files=dict(files))
         progress("validate", f"{len(tree)} files, checks: {', '.join(requested)}")
         with self._slots:
@@ -93,11 +98,22 @@ class ValidationService:
         result = ValidationResult(digest=digest, verdicts=verdicts)
         progress(
             "validated" if result.passed else "validation-failed",
-            f"{sum(len(v.findings) for v in verdicts)} findings",
+            f"{sum(len(v.findings) for v in verdicts)} findings"
+            f" in {self._clock() - started:.1f}s",
         )
         return result
 
     def _run_one(
+        self, name: str, digest: str, tree: Tree, progress: ProgressSink
+    ) -> Verdict:
+        started = self._clock()
+        verdict = self._run_checker(name, digest, tree, progress)
+        duration = self._clock() - started
+        outcome = "passed" if verdict.passed else "failed"
+        progress("checked", f"{name}: {outcome} in {duration:.1f}s")
+        return dataclasses.replace(verdict, duration_seconds=duration)
+
+    def _run_checker(
         self, name: str, digest: str, tree: Tree, progress: ProgressSink
     ) -> Verdict:
         checker = self._checkers[name]

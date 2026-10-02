@@ -65,6 +65,8 @@ class Verdict:
     tool_version: str
     ruleset_digest: str
     findings: tuple[Finding, ...] = ()
+    duration_seconds: float | None = None
+    """How long the check took when it ran, which a cached verdict carries over."""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -72,6 +74,11 @@ class Verdict:
             "tool": self.tool,
             "tool_version": self.tool_version,
             "ruleset_digest": self.ruleset_digest,
+            "duration_seconds": (
+                None
+                if self.duration_seconds is None
+                else round(self.duration_seconds, 3)
+            ),
             "findings": [f.as_dict() for f in self.findings],
         }
 

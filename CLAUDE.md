@@ -81,7 +81,8 @@ this".
   take injected implementations rather than importing concretes, which is how
   tests substitute checkers and command runners.
 - Phase strings are public API — relcoord forwards them into the PR comment.
-  `validate`, `validated`, `validation-failed`, `running`, `check-error`.
+  `validate`, `validated`, `validation-failed`, `running`, `checked`,
+  `check-error`.
 - Document user-visible endpoint or config changes in `README.md` and
   `manifest-validator.toml.example`; both are treated as the reference for the
   HTTP and config surface.

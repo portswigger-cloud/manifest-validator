@@ -88,6 +88,7 @@ The response aggregates one verdict per check:
       "tool": "kics",
       "tool_version": "v2.1.16",
       "ruleset_digest": "sha256:…",
+      "duration_seconds": 4.213,
       "findings": [
         {"rule_id": "…", "severity": "high", "file": "…", "resource": "…", "message": "…",
          "similarity_id": "…", "accepted": null}
@@ -104,7 +105,9 @@ from the verdict rather than by re-running the scanner by hand.
 `passed` is decided by the check that produced the findings and is never
 recomputed by a caller from the findings list. `tool_version` and
 `ruleset_digest` are what make a finding reproducible, and make any
-preview-versus-gate disagreement explainable.
+preview-versus-gate disagreement explainable. `duration_seconds` is how long the
+check took when it ran; a cached verdict carries over the duration of the run
+that produced it.
 
 Send `Accept: text/event-stream` to stream progress instead. Events are named by
 phase, and the last event is `result` or `error`:
@@ -112,7 +115,8 @@ phase, and the last event is `result` or `error`:
 ```
 event: validate          data: {"message": "158 files, checks: structural, kics"}
 event: running           data: {"message": "kics: 158 files"}
-event: validation-failed data: {"message": "3 findings"}
+event: checked           data: {"message": "kics: failed in 4.2s"}
+event: validation-failed data: {"message": "3 findings in 4.3s"}
 event: result            data: {…the JSON above…}
 ```
 
