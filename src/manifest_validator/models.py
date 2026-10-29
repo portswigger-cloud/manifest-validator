@@ -25,6 +25,9 @@ class Finding:
     severity: Severity
     message: str
     file: str | None = None
+    line: int | None = None
+    """The 1-based line in ``file`` the finding points at, when the tool says."""
+
     resource: str | None = None
     similarity_id: str | None = None
     """The scanner's stable identity for this finding, when it has one.
@@ -52,6 +55,7 @@ class Finding:
             "rule_id": self.rule_id,
             "severity": self.severity,
             "file": self.file,
+            "line": self.line,
             "resource": self.resource,
             "message": self.message,
             "similarity_id": self.similarity_id,

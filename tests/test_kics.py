@@ -424,6 +424,19 @@ def test_the_similarity_id_is_reported_so_a_suppression_can_be_written() -> None
     assert verdict.findings[0].similarity_id == "sim-2"
 
 
+def test_the_line_a_finding_points_at_is_reported() -> None:
+    location = OUR_ESCALATION["files"][0] | {"line": 977}
+    verdict = _run(_report([OUR_ESCALATION | {"files": [location]}]))
+    assert verdict.findings[0].line == 977
+
+
+def test_a_line_that_points_nowhere_is_not_reported() -> None:
+    for line in (0, -1, "12", None):
+        location = OUR_ESCALATION["files"][0] | {"line": line}
+        verdict = _run(_report([OUR_ESCALATION | {"files": [location]}]))
+        assert verdict.findings[0].line is None, line
+
+
 def _url_of(**query: Any) -> str | None:
     return _run(_report([OUR_ESCALATION | query])).findings[0].url
 
@@ -477,12 +490,14 @@ def test_an_exclusion_cannot_pass_for_a_type() -> None:
 
 
 def test_a_result_survives_encoding() -> None:
-    query = HIGH | {"platform": "Kubernetes"}
+    location = {"file_name": "a.yaml", "resource_name": "x", "line": 3}
+    query = HIGH | {"platform": "Kubernetes", "files": [location]}
     scanner = KicsScanner(
         check_name="kics", runner=StubRunner(exit_code=50, report=_report([query]))
     )
     [result] = scanner.scan(TREE, _noop).findings
     assert result.finding.url is not None
+    assert result.finding.line == 3
     assert scanner.decode(json.loads(json.dumps(scanner.encode(result)))) == result
 
 

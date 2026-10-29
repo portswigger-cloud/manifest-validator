@@ -34,7 +34,7 @@ REPORT_NAME = "results.json"
 
 # Part of every remembered result's key: change it whenever KicsScanner.encode
 # does, so results written in the old shape are never read in the new one.
-RESULT_ENCODING = "kics-result-v2"
+RESULT_ENCODING = "kics-result-v3"
 
 # KICS gives each query a page of its own, by platform and, for Crossplane, by
 # cloud provider. A report's query_url is not that page: it is the query's
@@ -92,6 +92,7 @@ class KicsScanner:
             "severity": finding.severity,
             "message": finding.message,
             "file": finding.file,
+            "line": finding.line,
             "resource": finding.resource,
             "similarity_id": finding.similarity_id,
             "url": finding.url,
@@ -105,6 +106,7 @@ class KicsScanner:
                 severity=_severity(str(data["severity"])),
                 message=str(data["message"]),
                 file=data["file"],
+                line=data["line"],
                 resource=data["resource"],
                 similarity_id=data["similarity_id"],
                 url=data["url"],
@@ -289,6 +291,7 @@ def _findings(
                     severity=_severity(str(query.get("severity", "info")).lower()),
                     message=str(query.get("description", query.get("query_name", ""))),
                     file=location.get("file_name"),
+                    line=_line(location),
                     resource=location.get("resource_name"),
                     similarity_id=location.get("similarity_id"),
                     url=_docs_url(query),
@@ -348,6 +351,12 @@ def _classify(
         if index not in matched
     )
     return tuple(classified)
+
+
+def _line(location: dict[str, Any]) -> int | None:
+    # Lines are 1-based, so anything else cannot point anywhere in the file.
+    line = location.get("line")
+    return line if isinstance(line, int) and line > 0 else None
 
 
 def _docs_url(query: dict[str, Any]) -> str | None:
