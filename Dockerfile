@@ -7,7 +7,11 @@ FROM astral/uv:trixie-slim AS builder
 
 WORKDIR /build
 
-COPY pyproject.toml uv.lock README.md ./
+# .python-version, or uv takes the newest Python that requires-python allows. For
+# a release PyYAML has no wheel for yet, that means building it from source here,
+# where there are no libyaml headers, so yaml.CSafeLoader does not exist and the
+# structural and image-policy checks fail on every tree.
+COPY pyproject.toml uv.lock README.md .python-version ./
 ENV VIRTUAL_ENV=/deps-venv
 ENV UV_PYTHON_INSTALL_DIR=/python
 RUN uv venv /deps-venv && uv sync --frozen --no-install-project --no-dev --active
