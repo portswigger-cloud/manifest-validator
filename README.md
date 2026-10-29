@@ -90,7 +90,7 @@ The response aggregates one verdict per check:
       "ruleset_digest": "sha256:…",
       "findings": [
         {"rule_id": "…", "severity": "high", "file": "…", "resource": "…", "message": "…",
-         "similarity_id": "…", "accepted": null}
+         "similarity_id": "…", "url": "https://…", "accepted": null}
       ]
     }
   ]
@@ -99,7 +99,10 @@ The response aggregates one verdict per check:
 
 `accepted` is null when a finding fails the verdict, and otherwise the reason it
 does not. `similarity_id` is reported so a one-off suppression can be written
-from the verdict rather than by re-running the scanner by hand.
+from the verdict rather than by re-running the scanner by hand. `url` is where
+the rule is documented, or null when its tool documents it nowhere: for KICS,
+the query's page on docs.kics.io, or the reference link its report gives where
+there is no page.
 
 `passed` is decided by the check that produced the findings and is never
 recomputed by a caller from the findings list. `tool_version` and

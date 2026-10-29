@@ -34,7 +34,14 @@ REPORT_NAME = "results.json"
 
 # Part of every remembered result's key: change it whenever KicsScanner.encode
 # does, so results written in the old shape are never read in the new one.
-RESULT_ENCODING = "kics-result-v1"
+RESULT_ENCODING = "kics-result-v2"
+
+# KICS gives each query a page of its own, by platform and, for Crossplane, by
+# cloud provider. A report's query_url is not that page: it is the query's
+# reference link, for most the upstream documentation of the field it checks.
+# It stands in where there is no page, as for the secrets rules, whose
+# query_url is KICS's own secrets page.
+DOCS_URL = "https://docs.kics.io/latest/queries"
 
 
 @dataclass(frozen=True)
@@ -87,6 +94,7 @@ class KicsScanner:
             "file": finding.file,
             "resource": finding.resource,
             "similarity_id": finding.similarity_id,
+            "url": finding.url,
             "query_name": result.query_name,
         }
 
@@ -99,6 +107,7 @@ class KicsScanner:
                 file=data["file"],
                 resource=data["resource"],
                 similarity_id=data["similarity_id"],
+                url=data["url"],
             ),
             query_name=str(data["query_name"]),
         )
@@ -282,6 +291,7 @@ def _findings(
                     file=location.get("file_name"),
                     resource=location.get("resource_name"),
                     similarity_id=location.get("similarity_id"),
+                    url=_docs_url(query),
                 ),
                 query_name=str(query.get("query_name", "")),
             )
@@ -338,6 +348,20 @@ def _classify(
         if index not in matched
     )
     return tuple(classified)
+
+
+def _docs_url(query: dict[str, Any]) -> str | None:
+    query_id = str(query.get("query_id", ""))
+    platform = str(query.get("platform", "")).lower()
+    provider = str(query.get("cloud_provider", "")).lower()
+    if query_id and platform == "kubernetes":
+        return f"{DOCS_URL}/kubernetes-queries/{query_id}/"
+    if query_id and platform == "crossplane" and provider:
+        return f"{DOCS_URL}/crossplane-queries/{provider}/{query_id}/"
+    fallback = query.get("query_url")
+    if isinstance(fallback, str) and fallback.startswith("https://"):
+        return fallback
+    return None
 
 
 def _report_order(result: KicsResult) -> tuple[str, ...]:
