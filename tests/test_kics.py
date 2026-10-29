@@ -424,6 +424,33 @@ def test_the_similarity_id_is_reported_so_a_suppression_can_be_written() -> None
     assert verdict.findings[0].similarity_id == "sim-2"
 
 
+def _url_of(**query: Any) -> str | None:
+    return _run(_report([OUR_ESCALATION | query])).findings[0].url
+
+
+def test_a_kubernetes_rule_links_to_its_kics_page() -> None:
+    assert _url_of(platform="Kubernetes", query_url="https://kubernetes.io/docs/") == (
+        "https://docs.kics.io/latest/queries/kubernetes-queries/def-456/"
+    )
+
+
+def test_a_crossplane_rule_links_to_its_providers_kics_page() -> None:
+    assert _url_of(platform="Crossplane", cloud_provider="AWS") == (
+        "https://docs.kics.io/latest/queries/crossplane-queries/aws/def-456/"
+    )
+
+
+def test_a_rule_without_a_kics_page_links_to_its_reference() -> None:
+    # The secrets rules, which KICS documents together on one page.
+    secrets = "https://docs.kics.io/latest/secrets/"
+    assert _url_of(platform="Common", query_url=secrets) == secrets
+
+
+def test_a_rule_with_nothing_to_link_to_has_no_url() -> None:
+    assert _url_of(platform="Common") is None
+    assert _url_of(platform="Common", query_url="javascript:alert(1)") is None
+
+
 def test_the_cache_identity_follows_version_and_selection() -> None:
     def identity(**kwargs: Any) -> str | None:
         return KicsScanner(
@@ -450,10 +477,12 @@ def test_an_exclusion_cannot_pass_for_a_type() -> None:
 
 
 def test_a_result_survives_encoding() -> None:
+    query = HIGH | {"platform": "Kubernetes"}
     scanner = KicsScanner(
-        check_name="kics", runner=StubRunner(exit_code=50, report=_report([HIGH]))
+        check_name="kics", runner=StubRunner(exit_code=50, report=_report([query]))
     )
     [result] = scanner.scan(TREE, _noop).findings
+    assert result.finding.url is not None
     assert scanner.decode(json.loads(json.dumps(scanner.encode(result)))) == result
 
 

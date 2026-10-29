@@ -33,6 +33,13 @@ class Finding:
     itself, rather than by re-running the scanner by hand to recover the id.
     """
 
+    url: str | None = None
+    """Where the rule is documented, when its tool documents it.
+
+    Reported so that whoever reads a finding can see what the rule checks before
+    deciding between a fix and an exception, without looking the id up by hand.
+    """
+
     accepted: str | None = None
     """Why this finding does not fail the verdict, or None if it does.
 
@@ -48,6 +55,7 @@ class Finding:
             "resource": self.resource,
             "message": self.message,
             "similarity_id": self.similarity_id,
+            "url": self.url,
             "accepted": self.accepted,
         }
 
