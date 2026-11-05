@@ -131,3 +131,29 @@ def test_progress_ends_on_a_terminal_phase() -> None:
 
 def _discard(phase: str, message: str) -> None:
     """Ignore progress, for a test that is only about the verdict."""
+
+
+class UncacheableChecker(StubChecker):
+    cacheable = False
+
+
+def test_a_check_that_is_not_cacheable_runs_every_time() -> None:
+    cached, uncached = StubChecker("one"), UncacheableChecker("two")
+    service = _service(cached, uncached)
+    _, sink = _events()
+    digest = compute_digest(FILES)
+    service.validate(digest, FILES, sink)
+    second = service.validate(digest, FILES, sink)
+    assert (cached.calls, uncached.calls) == (1, 2)
+    assert not second.cached
+    assert [v.tool for v in second.verdicts] == ["one", "two"]
+
+
+def test_a_failing_uncacheable_check_can_pass_on_the_next_request() -> None:
+    checker = UncacheableChecker("two", passed=False)
+    service = _service(checker)
+    _, sink = _events()
+    digest = compute_digest(FILES)
+    assert not service.validate(digest, FILES, sink).passed
+    checker._passed = True
+    assert service.validate(digest, FILES, sink).passed

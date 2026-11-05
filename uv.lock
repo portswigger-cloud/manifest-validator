@@ -280,6 +280,7 @@ source = { editable = "." }
 dependencies = [
     { name = "boto3" },
     { name = "click" },
+    { name = "httpx" },
     { name = "hypercorn" },
     { name = "pyyaml" },
     { name = "starlette" },
@@ -299,6 +300,7 @@ dev = [
 requires-dist = [
     { name = "boto3" },
     { name = "click" },
+    { name = "httpx" },
     { name = "hypercorn" },
     { name = "pyyaml" },
     { name = "starlette" },

@@ -22,7 +22,7 @@ def test_the_example_documents_every_check_kind() -> None:
     with EXAMPLE.open("rb") as handle:
         data = tomllib.load(handle)
     kinds = {check["kind"] for check in data["check"]}
-    assert kinds == {"structural", "image-policy", "kics"}
+    assert kinds == {"structural", "image-policy", "kics", "image-exists"}
 
 
 def test_defaults_apply() -> None:
@@ -220,3 +220,125 @@ def test_a_scan_cache_ttl_must_be_positive() -> None:
         Settings.from_mapping(
             MINIMAL | {"scan-cache": {"table-name": "t", "ttl-days": 0}}
         )
+
+
+def _image_exists(*registries: dict[str, str], **options: object) -> dict[str, object]:
+    check: dict[str, object] = {
+        "name": "image-exists",
+        "kind": "image-exists",
+        "registry": list(registries),
+    }
+    return {"check": [check | options]}
+
+
+def test_registries_are_read_onto_an_image_exists_check() -> None:
+    settings = Settings.from_mapping(
+        _image_exists(
+            {"host": "quay.io"},
+            {
+                "host": "registry.wiz.io",
+                "auth": "basic",
+                "username-file": "/wiz/username",
+                "password-file": "/wiz/password",
+            },
+            {"host": "123456789012.dkr.ecr.eu-west-1.amazonaws.com", "auth": "ecr"},
+            {"host": "docker.io"},
+            {"host": "mirror.example", "mirror-of": "docker.io"},
+            **{"cache-ttl-minutes": 30, "attempts": 5},
+        )
+    )
+    (check,) = settings.checks
+    assert [r.host for r in check.registries] == [
+        "quay.io",
+        "registry.wiz.io",
+        "123456789012.dkr.ecr.eu-west-1.amazonaws.com",
+        "docker.io",
+        "mirror.example",
+    ]
+    assert check.registries[0].auth == "anonymous"
+    assert check.registries[2].ecr_account == "123456789012"
+    assert check.registries[2].ecr_region == "eu-west-1"
+    assert (check.cache_ttl_minutes, check.attempts) == (30, 5)
+
+
+def test_an_image_exists_check_needs_a_registry() -> None:
+    with pytest.raises(ValueError, match="declares no registry"):
+        Settings.from_mapping(_image_exists())
+
+
+def test_a_registry_declared_twice_is_rejected() -> None:
+    with pytest.raises(ValueError, match="more than once"):
+        Settings.from_mapping(_image_exists({"host": "quay.io"}, {"host": "quay.io"}))
+
+
+@pytest.mark.parametrize("host", ["https://quay.io", "quay.io/org", "Quay.io"])
+def test_a_registry_host_is_bare(host: str) -> None:
+    with pytest.raises(ValueError, match="bare lower-case host"):
+        Settings.from_mapping(_image_exists({"host": host}))
+
+
+def test_an_unknown_auth_is_rejected() -> None:
+    with pytest.raises(ValueError, match="auth must be one of"):
+        Settings.from_mapping(_image_exists({"host": "quay.io", "auth": "token"}))
+
+
+def test_basic_auth_needs_both_files() -> None:
+    with pytest.raises(ValueError, match="username-file and password-file"):
+        Settings.from_mapping(
+            _image_exists({"host": "quay.io", "auth": "basic", "password-file": "/p"})
+        )
+
+
+def test_credential_files_are_only_for_basic_auth() -> None:
+    with pytest.raises(ValueError, match="only basic auth reads"):
+        Settings.from_mapping(_image_exists({"host": "quay.io", "password-file": "/p"}))
+
+
+def test_ecr_auth_needs_an_ecr_host() -> None:
+    with pytest.raises(ValueError, match="dkr.ecr"):
+        Settings.from_mapping(_image_exists({"host": "quay.io", "auth": "ecr"}))
+
+
+def test_a_mirror_of_an_undeclared_registry_is_rejected() -> None:
+    with pytest.raises(ValueError, match="not declared"):
+        Settings.from_mapping(
+            _image_exists({"host": "mirror.example", "mirror-of": "docker.io"})
+        )
+
+
+def test_a_mirror_takes_its_upstream_credential() -> None:
+    with pytest.raises(ValueError, match="mirror-of"):
+        Settings.from_mapping(
+            _image_exists(
+                {"host": "docker.io"},
+                {
+                    "host": "mirror.example",
+                    "mirror-of": "docker.io",
+                    "auth": "anonymous",
+                },
+            )
+        )
+
+
+def test_registries_are_meaningless_on_another_kind() -> None:
+    data = {
+        "check": [
+            {"name": "s", "kind": "structural", "registry": [{"host": "quay.io"}]}
+        ]
+    }
+    with pytest.raises(ValueError, match="only meaningful"):
+        Settings.from_mapping(data)
+
+
+def test_image_exists_options_are_meaningless_on_another_kind() -> None:
+    data = {"check": [{"name": "s", "kind": "structural", "attempts": 2}]}
+    with pytest.raises(ValueError, match="only meaningful"):
+        Settings.from_mapping(data)
+
+
+@pytest.mark.parametrize(
+    "key", ["cache-ttl-minutes", "request-timeout-seconds", "attempts"]
+)
+def test_image_exists_options_must_be_positive(key: str) -> None:
+    with pytest.raises(ValueError, match=key):
+        Settings.from_mapping(_image_exists({"host": "quay.io"}, **{key: 0}))

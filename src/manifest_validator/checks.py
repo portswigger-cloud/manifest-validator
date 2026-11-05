@@ -22,6 +22,10 @@ class Checker(Protocol):
 
     A checker owns its own pass/fail rule. The service aggregates verdicts and
     never second-guesses one.
+
+    A verdict is remembered per tree digest unless the checker sets
+    `cacheable = False`, which one whose answer depends on more than the tree
+    must: the same tree can be wrong today and right tomorrow.
     """
 
     @property
@@ -30,7 +34,7 @@ class Checker(Protocol):
     def run(self, digest: str, tree: Tree, progress: ProgressSink) -> Verdict: ...
 
 
-def _ruleset_digest(*parts: str) -> str:
+def ruleset_digest(*parts: str) -> str:
     digest = hashlib.sha256()
     for part in parts:
         digest.update(part.encode("utf-8"))
@@ -106,7 +110,7 @@ class StructuralChecker:
             passed=not findings,
             tool=self.name,
             tool_version=self.version,
-            ruleset_digest=_ruleset_digest(self.name, self.version),
+            ruleset_digest=ruleset_digest(self.name, self.version),
             findings=tuple(findings),
         )
 
@@ -133,13 +137,13 @@ class ImagePolicyChecker:
         for path, index, document, parse_error in tree.documents:
             if parse_error is not None or not isinstance(document, dict):
                 continue
-            for reference in _image_references(document):
+            for reference in image_references(document):
                 findings.extend(self._findings_for(reference, path, f"{path}#{index}"))
         return Verdict(
             passed=not findings,
             tool=self.name,
             tool_version=self.version,
-            ruleset_digest=_ruleset_digest(
+            ruleset_digest=ruleset_digest(
                 self.name, self.version, *sorted(self.allowed_registries)
             ),
             findings=tuple(findings),
@@ -168,7 +172,7 @@ class ImagePolicyChecker:
             )
 
 
-def _image_references(node: Any) -> Iterator[str]:
+def image_references(node: Any) -> Iterator[str]:
     """Every `image:` string anywhere in a document.
 
     Deliberately structure-agnostic: images appear under containers,
@@ -179,10 +183,10 @@ def _image_references(node: Any) -> Iterator[str]:
             if key == "image" and isinstance(value, str) and value.strip():
                 yield value
             else:
-                yield from _image_references(value)
+                yield from image_references(value)
     elif isinstance(node, list):
         for item in node:
-            yield from _image_references(item)
+            yield from image_references(item)
 
 
 def _is_pinned(reference: str) -> bool:

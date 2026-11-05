@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 
 import click
+import httpx
 from hypercorn.asyncio import serve
 from hypercorn.config import Config as HypercornConfig
 
@@ -16,6 +17,13 @@ from manifest_validator.checks import Checker, ImagePolicyChecker, StructuralChe
 from manifest_validator.commands import SubprocessRunner
 from manifest_validator.config import CheckConfig, Settings
 from manifest_validator.dynamodb_store import DynamoDBScanStore
+from manifest_validator.image_exists import (
+    Boto3EcrTokens,
+    ExistenceCache,
+    ImageExistsChecker,
+    RegistryClient,
+    RegistryCredentials,
+)
 from manifest_validator.kics import KicsChecker, KicsScanner
 from manifest_validator.scan_cache import FileScanCache, ScanStore
 from manifest_validator.service import ValidationService
@@ -57,6 +65,20 @@ def _build_checker(
             allowed_registries=check.allowed_registries,
             require_pinned=check.require_pinned,
         )
+    if check.kind == "image-exists":
+        return ImageExistsChecker(
+            check.registries,
+            RegistryClient(
+                RegistryCredentials(Boto3EcrTokens()),
+                http=httpx.Client(
+                    timeout=check.request_timeout_seconds,
+                    follow_redirects=True,
+                    headers={"User-Agent": "manifest-validator"},
+                ),
+                attempts=check.attempts,
+            ),
+            ExistenceCache(ttl_seconds=check.cache_ttl_minutes * 60),
+        )
     return KicsChecker(
         scanner=KicsScanner(
             check_name=check.name,
@@ -72,6 +94,34 @@ def _build_checker(
     )
 
 
+def verify_registry_credentials(checkers: dict[str, Checker]) -> None:
+    """Refuse to start with a registry credential that is missing or refused.
+
+    Otherwise the first anyone hears of it is a pull request's verdict, long
+    after the Secret broke. A rollout whose new pod will not start leaves the
+    old one serving. A registry that cannot be reached says nothing about its
+    credential, so it only warns: an outage there must not take this service
+    down with it.
+    """
+    rejected: list[str] = []
+    for name, checker in checkers.items():
+        if not isinstance(checker, ImageExistsChecker):
+            continue
+        for result in checker.verify_registries():
+            line = f"{name}: {result.registry}: {result.outcome}: {result.detail}"
+            if result.outcome == "ok":
+                logger.info("%s", line)
+            elif result.outcome == "unreachable":
+                logger.warning("%s", line)
+            else:
+                logger.error("%s", line)
+                rejected.append(line)
+    if rejected:
+        raise click.ClickException(
+            "registry credentials were refused or missing:\n" + "\n".join(rejected)
+        )
+
+
 @click.command()
 @click.option(
     "--config-path",
@@ -84,9 +134,11 @@ def main(config_path: Path) -> None:
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
     )
     settings = Settings.from_path(config_path)
+    checkers = build_checkers(settings, os.environ.get(KICS_VERSION_ENV) or None)
+    verify_registry_credentials(checkers)
 
     service = ValidationService(
-        build_checkers(settings, os.environ.get(KICS_VERSION_ENV) or None),
+        checkers,
         max_concurrent=settings.max_concurrent,
         default_checks=settings.default_check_names,
     )
