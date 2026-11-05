@@ -38,9 +38,16 @@ need a `system` PR, a regeneration, an Argo sync and a pod restart.
 
 - `checks.py` — the `Checker` protocol plus the two in-process checks,
   `StructuralChecker` and `ImagePolicyChecker`. A checker decides its own
-  `passed`; the service aggregates and never recomputes it from findings.
+  `passed`; the service aggregates and never recomputes it from findings, and
+  remembers it per (digest, check) unless the checker sets `cacheable = False`.
 - `commands.py` — the `CommandRunner` seam, `SubprocessRunner`, and writing a
   tree to a workspace. Generic; knows nothing about any tool.
+- `image_exists.py` — `ImageExistsChecker`: one manifest `HEAD` per image
+  against declared registries only, `RegistryClient` (token flow, retries, no
+  credential across a redirect), `RegistryCredentials` (files read per use, ECR
+  tokens from IAM) and `ExistenceCache`. `cacheable = False`, so the service
+  never reuses its verdict; `main.verify_registry_credentials` refuses to start
+  on a missing or refused credential.
 - `kics.py` — `KicsChecker` builds the command line and reads the report. Paths
   and output wiring are constants here because they ship with the image, and
   config that could move them could point the scan at a query set inside the

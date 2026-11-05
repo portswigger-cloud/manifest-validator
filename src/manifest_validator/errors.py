@@ -25,3 +25,7 @@ class CheckTimeout(ManifestValidatorError):
 
 class DisallowedImage(ManifestValidatorError):
     pass
+
+
+class RegistryCredentialError(ManifestValidatorError):
+    """A declared registry credential could not be produced."""

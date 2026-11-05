@@ -22,8 +22,9 @@ relcoord ──POST /v1/validate──▶ manifest-validator ──runs──▶
 
 Every check runs here. In-process checks read the tree from memory; a `command`
 check writes it to a temporary directory and runs a tool over it as a child
-process. Nothing is scheduled, nothing is pulled, and the service account needs
-no Kubernetes permissions at all.
+process. Nothing is scheduled, no image is pulled, and the service account needs
+no Kubernetes permissions at all. The one check that leaves the process is
+`image-exists`, which asks declared registries for manifests; see below.
 
 ## Endpoints
 
@@ -147,7 +148,7 @@ A digest mismatch is a 400, not a warning. The server validates what it hashed.
 
 ## Checks
 
-Three kinds, all behind one `Checker` seam:
+Four kinds, all behind one `Checker` seam:
 
 - `structural` — in-process. Every document parses and carries `apiVersion`,
   `kind` and `metadata.name`. Cheap and deterministic, and it reads the tree
@@ -202,6 +203,39 @@ Three kinds, all behind one `Checker` seam:
   for, without manufacturing failures on a schedule unrelated to whether
   anything changed — and without failing a build because someone fixed the thing
   upstream.
+
+- `image-exists` — in-process, but over the network. Every image the tree
+  references exists in its registry: one `HEAD` of its manifest per image, with
+  the registry's own token flow, and nothing pulled. References resolve the way
+  a runtime resolves them, so `redis` is `docker.io/library/redis:latest` and a
+  digest wins over a tag.
+
+  Only registries declared in `[[check.registry]]` are contacted, each with its
+  credential: none, `basic` from mounted files, or `ecr` from this service's IAM
+  role. An image on any other host is an `image-exists/unknown-registry`
+  finding and no request is made, because the tree is written by whoever opened
+  the pull request and must not choose where a credential goes. For the same
+  reason a credential is offered only to its own registry, never to a host a
+  redirect leads to, and a token realm must be https. A pull-through proxy this
+  service cannot reach is declared `mirror-of` its upstream and checked there.
+
+  `200` passes. `404` is `image-exists/missing`. A `401` or `403` once the token
+  flow is done is `image-exists/denied`, worded as missing *or* unreadable,
+  because quay and ghcr answer `401` for a repository that does not exist.
+  Timeouts, `429` and `5xx` are retried `attempts` times and then are
+  `image-exists/unverifiable`: a check that could not ask has not passed.
+
+  The answer is not a function of the tree, so its verdict is never remembered:
+  the same tree can name an image that is pushed after it failed, or deleted
+  after it passed. An image found to exist is believed for
+  `cache-ttl-minutes`, digests included, since a lifecycle policy deletes by
+  digest too. That cache is what keeps the ~17 trees of one change from asking
+  the same question 17 times. A missing image is asked about every time.
+
+  At start-up every credential is tried. One that is missing or refused stops
+  the service from starting, so a rollout with a broken Secret never replaces a
+  working pod. A registry that cannot be reached only warns: an outage there
+  says nothing about the credential and must not take this service down.
 
 A check that raises fails closed and reports a `check-error` finding. A `kics`
 check whose output cannot be parsed fails rather than passing: a green verdict
@@ -270,7 +304,11 @@ private index `https://repo.noa.re/`.
   while every tool is offline and unauthenticated, as KICS is. A tool that needs
   egress or a credential — `wizcli` — must not simply be added as another
   `command`; it wants the per-check isolation that Jobs gave, and `git log` has
-  that implementation.
+  that implementation. `image-exists` is not such a tool: it is this service's
+  own code, it reads image references rather than executing anything from the
+  tree, and the tree cannot choose a host to contact or a credential to send.
+  It does make this service hold registry credentials and need egress to the
+  declared registries.
 - **The NetworkPolicy does not exist.** Until it does there is nothing at all in
   front of this service, and `allow-egress = false` on a check is a label with
   no policy reading it. See "Who may call this".

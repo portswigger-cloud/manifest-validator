@@ -11,9 +11,24 @@ from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
-CheckKind = Literal["structural", "image-policy", "kics"]
+CheckKind = Literal["structural", "image-policy", "kics", "image-exists"]
+
+CHECK_KINDS: tuple[CheckKind, ...] = (
+    "structural",
+    "image-policy",
+    "kics",
+    "image-exists",
+)
+
+RegistryAuth = Literal["anonymous", "basic", "ecr"]
+
+REGISTRY_AUTHS: tuple[RegistryAuth, ...] = ("anonymous", "basic", "ecr")
 
 KICS_SEVERITIES = ("critical", "high", "medium", "low", "info")
+
+# <account>.dkr.ecr.<region>.amazonaws.com: the account and region are what an
+# authorization token is asked for, so an `ecr` registry has to spell both.
+_ECR_HOST = re.compile(r"(\d{12})\.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com")
 
 # A typo in an excluded id would silently exclude nothing, and nothing would ever
 # report it: the queries it names are the ones that stop being asked.
@@ -68,6 +83,96 @@ class PolicyException:
 
 
 @dataclass(frozen=True)
+class RegistryConfig:
+    """A registry the image-exists check may contact, and how it authenticates.
+
+    The list is the whole of what the check talks to. An image on a registry
+    that is not declared is a finding, not a request: the tree is written by
+    whoever opened the pull request, so it must not be able to choose a host to
+    send a credential to, or the service to call out to one.
+    """
+
+    host: str
+    auth: RegistryAuth = "anonymous"
+    username_file: str | None = None
+    password_file: str | None = None
+    """Read on every token request rather than once, so a rotated Secret takes
+    effect without a restart."""
+
+    mirror_of: str | None = None
+    """A pull-through proxy this service cannot reach, checked at its upstream.
+
+    The proxy serves what the upstream has, so asking the upstream is the same
+    question. The upstream has to be declared in its own right.
+    """
+
+    @property
+    def ecr_account(self) -> str:
+        match = _ECR_HOST.fullmatch(self.host)
+        if match is None:
+            raise ValueError(f"{self.host} is not an ECR registry host")
+        return match.group(1)
+
+    @property
+    def ecr_region(self) -> str:
+        match = _ECR_HOST.fullmatch(self.host)
+        if match is None:
+            raise ValueError(f"{self.host} is not an ECR registry host")
+        return match.group(2)
+
+    def describe(self) -> str:
+        if self.mirror_of:
+            return f"{self.host} (mirror of {self.mirror_of})"
+        return f"{self.host} ({self.auth})"
+
+    @classmethod
+    def from_mapping(cls, check_name: str, data: dict[str, Any]) -> RegistryConfig:
+        where = f"check.{check_name}.registry"
+        host = _optional_string(data, "host", where)
+        if host is None:
+            raise ValueError(f"{where}.host is required")
+        if "/" in host or host != host.strip().lower():
+            raise ValueError(
+                f"{where}.host {host!r} must be a bare lower-case host, as an image "
+                "reference spells it, without a scheme or path"
+            )
+        where = f"{where}[{host}]"
+        mirror_of = _optional_string(data, "mirror-of", where)
+        auth = data.get("auth", "anonymous")
+        if auth not in REGISTRY_AUTHS:
+            raise ValueError(f"{where}.auth must be one of {list(REGISTRY_AUTHS)}")
+        if mirror_of is not None and "auth" in data:
+            raise ValueError(
+                f"{where} sets auth together with mirror-of; a mirror is checked "
+                "with its upstream's credentials"
+            )
+        username_file = _optional_string(data, "username-file", where)
+        password_file = _optional_string(data, "password-file", where)
+        if auth == "basic":
+            if username_file is None or password_file is None:
+                raise ValueError(
+                    f"{where} uses basic auth, so it needs username-file and "
+                    "password-file"
+                )
+        elif username_file is not None or password_file is not None:
+            raise ValueError(
+                f"{where} sets credential files, which only basic auth reads"
+            )
+        if auth == "ecr" and _ECR_HOST.fullmatch(host) is None:
+            raise ValueError(
+                f"{where} uses ecr auth, so host must be "
+                "<account>.dkr.ecr.<region>.amazonaws.com"
+            )
+        return cls(
+            host=host,
+            auth=auth,
+            username_file=username_file,
+            password_file=password_file,
+            mirror_of=mirror_of,
+        )
+
+
+@dataclass(frozen=True)
 class CheckConfig:
     """A check the service is willing to run.
 
@@ -93,6 +198,15 @@ class CheckConfig:
     require_pinned: bool = True
     default: bool = True
     exceptions: tuple[PolicyException, ...] = ()
+    registries: tuple[RegistryConfig, ...] = ()
+    cache_ttl_minutes: int = 60
+    """How long an image found to exist is believed to, digests included: an
+    image pinned by digest can still be deleted, by a lifecycle policy if
+    nobody else."""
+
+    request_timeout_seconds: int = 10
+    attempts: int = 3
+    """Tries per registry request before a timeout, 429 or 5xx becomes a finding."""
 
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> CheckConfig:
@@ -100,10 +214,8 @@ class CheckConfig:
         if not isinstance(name, str) or not name.strip():
             raise ValueError("check.name must be a non-empty string")
         kind = data.get("kind")
-        if kind not in ("structural", "image-policy", "kics"):
-            raise ValueError(
-                f"check.{name}.kind must be 'structural', 'image-policy' or 'kics'"
-            )
+        if kind not in CHECK_KINDS:
+            raise ValueError(f"check.{name}.kind must be one of {list(CHECK_KINDS)}")
         exclude_queries = _string_tuple(data, "exclude-queries")
         if exclude_queries and kind != "kics":
             raise ValueError(
@@ -140,6 +252,23 @@ class CheckConfig:
         exceptions = tuple(
             PolicyException.from_mapping(name, entry) for entry in raw_exceptions
         )
+        registries = _registries(name, kind, data)
+        cache_ttl_minutes = _int(data, "cache-ttl-minutes", cls.cache_ttl_minutes)
+        request_timeout_seconds = _int(
+            data, "request-timeout-seconds", cls.request_timeout_seconds
+        )
+        attempts = _int(data, "attempts", cls.attempts)
+        for key, value in (
+            ("cache-ttl-minutes", cache_ttl_minutes),
+            ("request-timeout-seconds", request_timeout_seconds),
+            ("attempts", attempts),
+        ):
+            if key in data and kind != "image-exists":
+                raise ValueError(
+                    f"check.{name}.{key} is only meaningful for an 'image-exists' check"
+                )
+            if value <= 0:
+                raise ValueError(f"check.{name}.{key} must be positive")
         return cls(
             name=name,
             kind=kind,
@@ -151,7 +280,52 @@ class CheckConfig:
             require_pinned=_bool(data, "require-pinned", cls.require_pinned),
             default=_bool(data, "default", cls.default),
             exceptions=exceptions,
+            registries=registries,
+            cache_ttl_minutes=cache_ttl_minutes,
+            request_timeout_seconds=request_timeout_seconds,
+            attempts=attempts,
         )
+
+
+def _registries(
+    check_name: str, kind: str, data: dict[str, Any]
+) -> tuple[RegistryConfig, ...]:
+    raw = data.get("registry", [])
+    if not isinstance(raw, list) or not all(isinstance(r, dict) for r in raw):
+        raise ValueError(f"check.{check_name}.registry must be a list of tables")
+    if kind != "image-exists":
+        if raw:
+            raise ValueError(
+                f"check.{check_name}.registry is only meaningful for an "
+                "'image-exists' check"
+            )
+        return ()
+    if not raw:
+        raise ValueError(
+            f"check.{check_name} declares no registry, so every image would be "
+            "a finding"
+        )
+    registries = tuple(RegistryConfig.from_mapping(check_name, r) for r in raw)
+    hosts = [r.host for r in registries]
+    duplicates = sorted({h for h in hosts if hosts.count(h) > 1})
+    if duplicates:
+        raise ValueError(f"check.{check_name} declares {duplicates} more than once")
+    by_host = {r.host: r for r in registries}
+    for registry in registries:
+        if registry.mirror_of is None:
+            continue
+        upstream = by_host.get(registry.mirror_of)
+        if upstream is None:
+            raise ValueError(
+                f"check.{check_name}.registry[{registry.host}] is a mirror of "
+                f"{registry.mirror_of}, which is not declared"
+            )
+        if upstream.mirror_of is not None:
+            raise ValueError(
+                f"check.{check_name}.registry[{registry.host}] is a mirror of "
+                f"another mirror, {registry.mirror_of}"
+            )
+    return registries
 
 
 @dataclass(frozen=True)

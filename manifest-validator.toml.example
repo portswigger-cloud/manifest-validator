@@ -28,6 +28,45 @@ kind = "image-policy"
 allowed-registries = ["public.ecr.aws/"]
 require-pinned = true
 
+# Every image exists in its registry: one manifest HEAD per image, nothing
+# pulled. Only declared registries are contacted, and an image anywhere else is
+# a finding, so the tree cannot choose a host to send a credential to. Verdicts
+# are not remembered, since the same tree can name an image that is pushed (or
+# deleted) later; an image found to exist is believed for cache-ttl-minutes.
+#
+# At start-up every credential is tried. One that is missing or refused stops
+# the service from starting; a registry that cannot be reached only warns.
+[[check]]
+name = "image-exists"
+kind = "image-exists"
+cache-ttl-minutes = 60
+request-timeout-seconds = 10
+# Tries per request before a timeout, 429 or 5xx becomes a finding.
+attempts = 3
+
+# Public registries need no credential. Docker Hub is `docker.io` however a
+# reference spells it, including bare names like `redis`.
+[[check.registry]]
+host = "quay.io"
+
+# Read on every token request, so a rotated Secret needs no restart.
+[[check.registry]]
+host = "docker.io"
+auth = "basic"
+username-file = "/dockerhub/username"
+password-file = "/dockerhub/password"
+
+# This service's own IAM role, via ecr:GetAuthorizationToken; another account's
+# repository has to grant it ecr:BatchGetImage.
+[[check.registry]]
+host = "123456789012.dkr.ecr.eu-west-1.amazonaws.com"
+auth = "ecr"
+
+# A pull-through proxy this service cannot reach, checked at its upstream.
+[[check.registry]]
+host = "docker-mirror.internal.example"
+mirror-of = "docker.io"
+
 [[check]]
 name = "kics"
 kind = "kics"
