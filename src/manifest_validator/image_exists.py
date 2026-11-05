@@ -653,27 +653,28 @@ def _problem(
     declared: RegistryConfig,
     lookup: Lookup,
 ) -> tuple[str, Severity, str]:
-    where = (
-        registry.host
+    mirrored = (
+        ""
         if declared is registry
-        else f"{registry.host}, which {declared.host} mirrors,"
+        else f"; checked at {registry.host}, which {declared.host} mirrors"
     )
     if lookup.outcome == "missing":
         return (
             "missing",
             "critical",
-            f"image {text!r} does not exist: {where} has no {target.key} "
-            f"({lookup.detail})",
+            f"image {text!r} does not exist: {registry.host} has no {target.key} "
+            f"({lookup.detail}{mirrored})",
         )
     if lookup.outcome == "denied":
         return (
             "denied",
             "high",
             f"image {text!r} does not exist, or the {registry.auth} credential for "
-            f"{registry.host} cannot read it ({lookup.detail})",
+            f"{registry.host} cannot read it ({lookup.detail}{mirrored})",
         )
     return (
         "unverifiable",
         "high",
-        f"could not tell whether image {text!r} exists in {where}: {lookup.detail}",
+        f"could not tell whether image {text!r} exists in {registry.host}: "
+        f"{lookup.detail}{mirrored}",
     )
