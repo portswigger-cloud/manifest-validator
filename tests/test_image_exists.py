@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import base64
+import threading
+import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import httpx
@@ -19,6 +22,7 @@ from manifest_validator.image_exists import (
     Lookup,
     RegistryClient,
     RegistryCredentials,
+    SharedLookups,
     Verification,
     parse_reference,
 )
@@ -636,3 +640,117 @@ def test_an_ecr_token_source_that_cannot_reach_aws_is_unreachable() -> None:
     assert client.verify(registry).outcome == "unreachable"
     image = parse_reference(f"{ECR_HOST}/apps/runner:1")
     assert client.lookup(image, registry).outcome == "unverifiable"
+
+
+# --- sharing lookups between validations ---------------------------------------
+
+
+class HeldRegistries(FakeRegistries):
+    """Holds every lookup until released, so callers can pile up behind one."""
+
+    def __init__(
+        self, outcomes: dict[str, Lookup] | None = None, error: bool = False
+    ) -> None:
+        super().__init__(outcomes)
+        self.release = threading.Event()
+        self.error = error
+
+    def lookup(self, image: ImageReference, registry: RegistryConfig) -> Lookup:
+        result = super().lookup(image, registry)
+        assert self.release.wait(5)
+        if self.error:
+            raise RuntimeError("registry client blew up")
+        return result
+
+
+def _wait_for(condition: Callable[[], object]) -> None:
+    deadline = time.monotonic() + 5
+    while not condition():
+        assert time.monotonic() < deadline, "timed out"
+        time.sleep(0.01)
+
+
+QUAY_APP = parse_reference("quay.io/team/app:1")
+QUAY = RegistryConfig("quay.io")
+
+
+def test_callers_share_a_lookup_already_in_flight() -> None:
+    # Missing is never cached, so one request means the callers really waited on
+    # the first rather than finding its answer remembered.
+    registries = HeldRegistries({QUAY_APP.key: Lookup("missing", "404")})
+    shared = SharedLookups(registries, ExistenceCache(ttl_seconds=60))
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        first = pool.submit(shared.lookup, QUAY_APP, QUAY)
+        _wait_for(lambda: registries.asked)
+        others = [pool.submit(shared.lookup, QUAY_APP, QUAY) for _ in range(3)]
+        time.sleep(0.1)
+        registries.release.set()
+        results = [f.result(timeout=5) for f in (first, *others)]
+    assert [r.outcome for r in results] == ["missing"] * 4
+    assert len(registries.asked) == 1
+
+
+def test_a_shared_missing_answer_is_not_remembered() -> None:
+    registries = FakeRegistries({QUAY_APP.key: Lookup("missing", "404")})
+    shared = SharedLookups(registries, ExistenceCache(ttl_seconds=60))
+    shared.lookup(QUAY_APP, QUAY)
+    shared.lookup(QUAY_APP, QUAY)
+    assert len(registries.asked) == 2
+
+
+def test_a_found_answer_is_remembered_before_it_stops_being_shared() -> None:
+    cache = ExistenceCache(ttl_seconds=60)
+    shared = SharedLookups(FakeRegistries(), cache)
+    shared.lookup(QUAY_APP, QUAY)
+    assert QUAY_APP.key in cache
+    assert shared.known(QUAY_APP)
+
+
+def test_a_lookup_that_raises_fails_every_caller_and_is_not_kept() -> None:
+    registries = HeldRegistries(error=True)
+    shared = SharedLookups(registries, ExistenceCache(ttl_seconds=60))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(shared.lookup, QUAY_APP, QUAY)
+        _wait_for(lambda: registries.asked)
+        second = pool.submit(shared.lookup, QUAY_APP, QUAY)
+        time.sleep(0.1)
+        registries.release.set()
+        for future in (first, second):
+            with pytest.raises(RuntimeError, match="blew up"):
+                future.result(timeout=5)
+    registries.error = False
+    assert shared.lookup(QUAY_APP, QUAY).outcome == "found"
+    assert len(registries.asked) == 2
+
+
+def test_concurrent_validations_ask_about_an_image_once() -> None:
+    registries = HeldRegistries({QUAY_APP.key: Lookup("missing", "404")})
+    checker = _checker(registries)
+    tree = _tree({"d.yaml": _deployment("quay.io/team/app:1")})
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        runs = [pool.submit(checker.run, DIGEST, tree, _noop) for _ in range(3)]
+        _wait_for(lambda: registries.asked)
+        time.sleep(0.1)
+        registries.release.set()
+        verdicts = [run.result(timeout=5) for run in runs]
+    assert [v.findings[0].rule_id for v in verdicts] == ["image-exists/missing"] * 3
+    assert len(registries.asked) == 1
+
+
+def test_two_spellings_of_one_image_are_one_question() -> None:
+    registries = FakeRegistries({"docker.io/library/redis:8": Lookup("missing", "404")})
+    verdict = _checker(registries).run(
+        DIGEST,
+        _tree(
+            {
+                "d.yaml": _deployment(
+                    "redis:8",
+                    "docker.io/library/redis:8",
+                    "docker-external.devtools.example/library/redis:8",
+                )
+            }
+        ),
+        _noop,
+    )
+    assert registries.asked == [("docker.io/library/redis:8", "docker.io")]
+    assert [f.rule_id for f in verdict.findings] == ["image-exists/missing"] * 3

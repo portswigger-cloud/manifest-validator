@@ -25,7 +25,7 @@ import re
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -521,6 +521,53 @@ class RegistryLookup(Protocol):
     def verify(self, registry: RegistryConfig) -> Verification: ...
 
 
+class SharedLookups:
+    """One request per image at a time, however many validations want it.
+
+    relcoord validates a change's trees concurrently, and they mostly name the
+    same images, so a bump would otherwise ask a registry the same question once
+    per tree in flight, which is what trips its rate limit. A lookup already
+    under way is waited for instead, whatever it answers.
+
+    An image found to exist is added to the cache before the lookup stops being
+    shared, so a validation arriving in between finds one or the other and
+    never asks again.
+    """
+
+    def __init__(self, client: RegistryLookup, cache: ExistenceCache) -> None:
+        self._client = client
+        self._cache = cache
+        self._in_flight: dict[str, Future[Lookup]] = {}
+        self._lock = threading.Lock()
+
+    def known(self, image: ImageReference) -> bool:
+        return image.key in self._cache
+
+    def lookup(self, image: ImageReference, registry: RegistryConfig) -> Lookup:
+        key = image.key
+        with self._lock:
+            shared = self._in_flight.get(key)
+            if shared is None:
+                if key in self._cache:
+                    return Lookup("found")
+                mine: Future[Lookup] = Future()
+                self._in_flight[key] = mine
+        if shared is not None:
+            return shared.result()
+        try:
+            result = self._client.lookup(image, registry)
+            if result.outcome == "found":
+                self._cache.add(key)
+            mine.set_result(result)
+            return result
+        except BaseException as exc:
+            mine.set_exception(exc)
+            raise
+        finally:
+            with self._lock:
+                del self._in_flight[key]
+
+
 @dataclass(frozen=True)
 class _Place:
     file: str
@@ -543,7 +590,7 @@ class ImageExistsChecker:
     ) -> None:
         self._registries = {registry.host: registry for registry in registries}
         self._client = client
-        self._cache = cache
+        self._lookups = SharedLookups(client, cache)
         self._workers = workers
 
     @property
@@ -563,6 +610,9 @@ class ImageExistsChecker:
         progress("running", f"image-exists: {len(places)} images")
 
         problems: dict[str, tuple[str, Severity, str]] = {}
+        # Keyed on the reference text, for the finding's wording, and asked by
+        # target: two spellings of one image, or a mirror and its upstream, are
+        # one question.
         pending: dict[str, tuple[ImageReference, RegistryConfig, RegistryConfig]] = {}
         for text in places:
             try:
@@ -584,30 +634,30 @@ class ImageExistsChecker:
                 )
                 continue
             target, registry = self._target(image, declared)
-            if target.key not in self._cache:
+            if not self._lookups.known(target):
                 pending[text] = (target, registry, declared)
 
-        if pending:
-            progress("running", f"image-exists: asking about {len(pending)} images")
+        targets = {
+            target.key: (target, registry) for target, registry, _ in pending.values()
+        }
+        if targets:
+            progress("running", f"image-exists: asking about {len(targets)} images")
             with ThreadPoolExecutor(
-                max_workers=min(self._workers, len(pending)),
+                max_workers=min(self._workers, len(targets)),
                 thread_name_prefix="image-exists",
             ) as pool:
                 lookups = dict(
                     zip(
-                        pending,
+                        targets,
                         pool.map(
-                            lambda entry: self._client.lookup(entry[0], entry[1]),
-                            pending.values(),
+                            lambda pair: self._lookups.lookup(*pair), targets.values()
                         ),
                         strict=True,
                     )
                 )
-            for text, lookup in lookups.items():
-                target, registry, declared = pending[text]
-                if lookup.outcome == "found":
-                    self._cache.add(target.key)
-                else:
+            for text, (target, registry, declared) in pending.items():
+                lookup = lookups[target.key]
+                if lookup.outcome != "found":
                     problems[text] = _problem(text, target, registry, declared, lookup)
 
         findings = tuple(
