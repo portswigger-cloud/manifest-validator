@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from manifest_validator.config import RegistryConfig
-from manifest_validator.errors import RegistryCredentialError
+from manifest_validator.errors import RegistryCredentialError, RegistryUnreachable
 from manifest_validator.image_exists import (
     EcrToken,
     ExistenceCache,
@@ -620,3 +620,19 @@ def test_retry_after_is_waited_for_once() -> None:
     )
     assert lookup.outcome == "found"
     assert slept == [4.0]
+
+
+def test_an_ecr_token_source_that_cannot_reach_aws_is_unreachable() -> None:
+    class Offline:
+        def token(self, region: str) -> EcrToken:
+            raise RegistryUnreachable("no route to sts")
+
+    client = RegistryClient(
+        RegistryCredentials(Offline()),
+        http=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200))),
+        sleep=_no_sleep,
+    )
+    registry = RegistryConfig(ECR_HOST, auth="ecr")
+    assert client.verify(registry).outcome == "unreachable"
+    image = parse_reference(f"{ECR_HOST}/apps/runner:1")
+    assert client.lookup(image, registry).outcome == "unverifiable"

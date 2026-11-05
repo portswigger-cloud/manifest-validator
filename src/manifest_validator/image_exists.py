@@ -34,7 +34,7 @@ import httpx
 
 from manifest_validator.checks import ProgressSink, image_references, ruleset_digest
 from manifest_validator.config import RegistryConfig
-from manifest_validator.errors import RegistryCredentialError
+from manifest_validator.errors import RegistryCredentialError, RegistryUnreachable
 from manifest_validator.models import Finding, Severity, Tree, Verdict
 
 logger = logging.getLogger(__name__)
@@ -166,7 +166,14 @@ class Boto3EcrTokens:
 
     def token(self, region: str) -> EcrToken:
         import boto3
-        from botocore.exceptions import BotoCoreError, ClientError
+        from botocore.exceptions import (
+            BotoCoreError,
+            ClientError,
+            ConnectionClosedError,
+            ConnectTimeoutError,
+            EndpointConnectionError,
+            ReadTimeoutError,
+        )
 
         with self._lock:
             client = self._clients.get(region)
@@ -175,6 +182,16 @@ class Boto3EcrTokens:
                 self._clients[region] = client
         try:
             data = client.get_authorization_token()["authorizationData"][0]
+        except (
+            ConnectionClosedError,
+            ConnectTimeoutError,
+            EndpointConnectionError,
+            ReadTimeoutError,
+        ) as exc:
+            # Not reaching STS or ECR says nothing about the role.
+            raise RegistryUnreachable(
+                f"cannot reach AWS for an ECR token in {region}: {exc}"
+            ) from exc
         except (BotoCoreError, ClientError) as exc:
             raise RegistryCredentialError(
                 f"no ECR authorization token for {region}: {exc}"
@@ -261,7 +278,7 @@ class RegistryClient:
     def lookup(self, image: ImageReference, registry: RegistryConfig) -> Lookup:
         try:
             credential = self._credentials.basic(registry)
-        except RegistryCredentialError as exc:
+        except (RegistryCredentialError, RegistryUnreachable) as exc:
             return Lookup("unverifiable", f"the {registry.auth} credential: {exc}")
         api = api_host(registry.host)
         url = httpx.URL(
@@ -306,6 +323,8 @@ class RegistryClient:
             credential = self._credentials.basic(registry)
         except RegistryCredentialError as exc:
             return Verification(host, "rejected", str(exc))
+        except RegistryUnreachable as exc:
+            return Verification(host, "unreachable", str(exc))
         api = api_host(host)
         url = httpx.URL(f"https://{api}/v2/")
         authorization = (

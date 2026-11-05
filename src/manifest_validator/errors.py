@@ -29,3 +29,11 @@ class DisallowedImage(ManifestValidatorError):
 
 class RegistryCredentialError(ManifestValidatorError):
     """A declared registry credential could not be produced."""
+
+
+class RegistryUnreachable(ManifestValidatorError):
+    """Whatever issues a registry credential could not be reached.
+
+    Kept apart from RegistryCredentialError because only a refusal stops the
+    service from starting: an outage says nothing about the credential.
+    """
