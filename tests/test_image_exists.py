@@ -78,6 +78,7 @@ def _client(
         ),
         attempts=attempts,
         sleep=_no_sleep,
+        clock=clock,
     )
     return client, recorder
 
@@ -101,13 +102,19 @@ def _basic_registry(tmp_path: Path, host: str = "registry.example") -> RegistryC
     )
 
 
-def _token_registry(manifests: dict[str, int], token_status: int = 200) -> Handler:
+def _token_registry(
+    manifests: dict[str, int], token_status: int = 200, expires_in: int | None = None
+) -> Handler:
     """A registry with a bearer token flow, answering HEADs from `manifests`."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.host == "auth.example":
             if token_status != 200:
                 return httpx.Response(token_status)
+            if expires_in is not None:
+                return httpx.Response(
+                    200, json={"token": "t0k3n", "expires_in": expires_in}
+                )
             return httpx.Response(200, json={"token": "t0k3n"})
         if request.headers.get("authorization") != "Bearer t0k3n":
             return httpx.Response(
@@ -218,6 +225,98 @@ def test_a_token_is_reused_for_the_same_repository() -> None:
     client.lookup(parse_reference("registry.example/team/app:1.0"), registry)
     client.lookup(parse_reference("registry.example/team/app:2.0"), registry)
     assert sum(r.url.host == "auth.example" for r in recorder.requests) == 1
+
+
+def _token_requests(recorder: Recorder) -> int:
+    return sum(r.url.host == "auth.example" for r in recorder.requests)
+
+
+def test_a_token_without_expires_in_is_replaced_within_a_minute() -> None:
+    now = [0.0]
+    client, recorder = _client(
+        _token_registry({"/v2/team/app/manifests/1.0": 200}), clock=lambda: now[0]
+    )
+    image = parse_reference("registry.example/team/app:1.0")
+    registry = RegistryConfig("registry.example")
+    client.lookup(image, registry)
+    now[0] = 45.0
+    client.lookup(image, registry)
+    assert _token_requests(recorder) == 1
+    now[0] = 55.0
+    assert client.lookup(image, registry).outcome == "found"
+    assert _token_requests(recorder) == 2
+
+
+def test_a_token_is_reused_for_as_long_as_its_expires_in() -> None:
+    now = [0.0]
+    client, recorder = _client(
+        _token_registry({"/v2/team/app/manifests/1.0": 200}, expires_in=300),
+        clock=lambda: now[0],
+    )
+    image = parse_reference("registry.example/team/app:1.0")
+    registry = RegistryConfig("registry.example")
+    client.lookup(image, registry)
+    now[0] = 280.0
+    client.lookup(image, registry)
+    assert _token_requests(recorder) == 1
+    now[0] = 295.0
+    client.lookup(image, registry)
+    assert _token_requests(recorder) == 2
+
+
+def test_a_remembered_token_answered_400_is_replaced() -> None:
+    # Public ECR answers a token it no longer honours with 400, not 401.
+    honoured: set[str] = set()
+    issued = [0]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "auth.example":
+            issued[0] += 1
+            token = f"token-{issued[0]}"
+            honoured.add(token)
+            return httpx.Response(200, json={"token": token, "expires_in": 3600})
+        authorization = request.headers.get("authorization")
+        if authorization is None:
+            return httpx.Response(
+                401, headers=_bearer_challenge("https://auth.example/token")
+            )
+        if authorization.removeprefix("Bearer ") not in honoured:
+            return httpx.Response(
+                400,
+                json={"errors": [{"code": "DENIED", "message": "token is invalid"}]},
+            )
+        return httpx.Response(200)
+
+    client, recorder = _client(handler)
+    image = parse_reference("registry.example/team/app:1.0")
+    registry = RegistryConfig("registry.example")
+    assert client.lookup(image, registry).outcome == "found"
+    honoured.clear()
+    assert client.lookup(image, registry).outcome == "found"
+    assert _token_requests(recorder) == 2
+    assert recorder.requests[-1].headers["authorization"] == "Bearer token-2"
+
+
+def test_a_400_to_a_fresh_token_is_unverifiable_and_not_asked_again() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "auth.example":
+            return httpx.Response(200, json={"token": "t0k3n"})
+        if "authorization" not in request.headers:
+            return httpx.Response(
+                401, headers=_bearer_challenge("https://auth.example/token")
+            )
+        return httpx.Response(400)
+
+    client, recorder = _client(handler)
+    image = parse_reference("registry.example/team/app:1.0")
+    registry = RegistryConfig("registry.example")
+    first = client.lookup(image, registry)
+    assert first.outcome == "unverifiable"
+    assert first.detail == "registry.example answered 400"
+    assert len(recorder.requests) == 3
+    # The remembered token is suspected once, replaced, and that answer stands.
+    assert client.lookup(image, registry).outcome == "unverifiable"
+    assert len(recorder.requests) == 7
 
 
 def test_a_basic_credential_is_offered_to_the_token_endpoint(tmp_path: Path) -> None:

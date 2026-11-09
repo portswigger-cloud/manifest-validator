@@ -62,6 +62,11 @@ _MAX_BACKOFF_SECONDS = 10.0
 # ECR tokens last twelve hours; one about to lapse is replaced early rather than
 # risk it expiring between being read and being used.
 _ECR_REFRESH_MARGIN_SECONDS = 1800.0
+# What the distribution token specification says a token lasts when its response
+# does not say, as public ECR's never do.
+_DEFAULT_TOKEN_LIFETIME_SECONDS = 60.0
+# A bearer token about to lapse is not sent: it could expire on the way.
+_TOKEN_REFRESH_MARGIN_SECONDS = 10.0
 _MAX_TOKENS = 1024
 
 _REPOSITORY = re.compile(
@@ -267,12 +272,15 @@ class RegistryClient:
         http: httpx.Client,
         attempts: int = 3,
         sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._credentials = credentials
         self._http = http
         self._attempts = attempts
         self._sleep = sleep
-        self._tokens: dict[tuple[str, str], str] = {}
+        self._clock = clock
+        # Each bearer token, and the clock reading after which it is not sent.
+        self._tokens: dict[tuple[str, str], tuple[str, float]] = {}
         self._lock = threading.Lock()
 
     def lookup(self, image: ImageReference, registry: RegistryConfig) -> Lookup:
@@ -285,9 +293,19 @@ class RegistryClient:
             f"https://{api}/v2/{image.repository}/manifests/{image.reference}"
         )
         try:
+            remembered = self._remembered(api, image.repository)
             response = self._send(
-                "HEAD", url, self._authorization(api, image, registry, credential)
+                "HEAD", url, remembered or self._authorization(registry, credential)
             )
+            if remembered is not None and response.status_code not in (200, 401, 404):
+                # Not every registry answers a token it no longer honours with the
+                # 401 that starts the token flow again: public ECR answers 400. So
+                # a remembered token is the first suspect, and the lookup is made
+                # once more without it.
+                self._forget(api, image.repository)
+                response = self._send(
+                    "HEAD", url, self._authorization(registry, credential)
+                )
             if response.status_code == 401:
                 # After a redirect it is the host that challenged that has to be
                 # answered, and only the declared registry is ever offered the
@@ -364,17 +382,25 @@ class RegistryClient:
             host, "unreachable", f"{api} answered {response.status_code}"
         )
 
-    def _authorization(
-        self,
-        api: str,
-        image: ImageReference,
-        registry: RegistryConfig,
-        credential: tuple[str, str] | None,
-    ) -> str | None:
+    def _remembered(self, host: str, repository: str) -> str | None:
+        """The repository's bearer token, while it has time left to run."""
         with self._lock:
-            token = self._tokens.get((api, image.repository))
-        if token is not None:
+            remembered = self._tokens.get((host, repository))
+            if remembered is None:
+                return None
+            token, stale_at = remembered
+            if stale_at <= self._clock():
+                del self._tokens[(host, repository)]
+                return None
             return f"Bearer {token}"
+
+    def _forget(self, host: str, repository: str) -> None:
+        with self._lock:
+            self._tokens.pop((host, repository), None)
+
+    def _authorization(
+        self, registry: RegistryConfig, credential: tuple[str, str] | None
+    ) -> str | None:
         # ECR takes the credential itself, so there is no challenge to wait for.
         if registry.auth == "ecr" and credential is not None:
             return _basic(credential)
@@ -392,14 +418,17 @@ class RegistryClient:
         scheme, params = challenge
         if scheme == "basic":
             return _basic(credential) if credential is not None else None
-        token = self._token(
+        token, lifetime = self._token(
             params, scope=f"repository:{repository}:pull", credential=credential
         )
         host = response.url.host
         with self._lock:
             if len(self._tokens) >= _MAX_TOKENS:
                 self._tokens.clear()
-            self._tokens[(host, repository)] = token
+            self._tokens[(host, repository)] = (
+                token,
+                self._clock() + lifetime - _TOKEN_REFRESH_MARGIN_SECONDS,
+            )
         return f"Bearer {token}"
 
     def _token(
@@ -408,7 +437,8 @@ class RegistryClient:
         *,
         scope: str | None,
         credential: tuple[str, str] | None,
-    ) -> str:
+    ) -> tuple[str, float]:
+        """A token, and the seconds it lasts."""
         realm = params.get("realm", "")
         if not realm.startswith("https://"):
             raise _Unverifiable(f"token realm {realm!r} is not https")
@@ -434,7 +464,10 @@ class RegistryClient:
         token = body.get("token") or body.get("access_token")
         if not isinstance(token, str) or not token:
             raise _Unverifiable(f"{url.host} sent no token")
-        return token
+        lifetime = body.get("expires_in")
+        if not isinstance(lifetime, int | float) or lifetime <= 0:
+            lifetime = _DEFAULT_TOKEN_LIFETIME_SECONDS
+        return token, float(lifetime)
 
     def _send(
         self, method: str, url: httpx.URL, authorization: str | None

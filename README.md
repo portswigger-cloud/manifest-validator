@@ -225,6 +225,13 @@ Four kinds, all behind one `Checker` seam:
   Timeouts, `429` and `5xx` are retried `attempts` times and then are
   `image-exists/unverifiable`: a check that could not ask has not passed.
 
+  A bearer token is reused for its repository until its `expires_in` is nearly
+  up, or for under a minute when the registry does not say, which is the token
+  specification's default. Any other answer than `200`, `401` or `404` to a
+  remembered token drops it and asks once more without it, because public ECR
+  answers a token it no longer honours with `400` rather than the `401` that
+  would start the token flow again.
+
   The answer is not a function of the tree, so its verdict is never remembered:
   the same tree can name an image that is pushed after it failed, or deleted
   after it passed. An image found to exist is believed for
