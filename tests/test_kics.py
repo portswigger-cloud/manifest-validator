@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -37,12 +39,18 @@ class StubRunner:
         self._report = report
         self.argv: tuple[str, ...] = ()
         self.cwd: Path | None = None
+        self.env: Mapping[str, str] | None = None
 
     def run(
-        self, argv: tuple[str, ...], cwd: Path, timeout_seconds: int
+        self,
+        argv: tuple[str, ...],
+        cwd: Path,
+        timeout_seconds: int,
+        env: Mapping[str, str] | None = None,
     ) -> CommandOutcome:
         self.argv = argv
         self.cwd = cwd
+        self.env = env
         if self._report is not None:
             output = _flag(argv, "--output-path")
             assert output is not None
@@ -90,7 +98,11 @@ def test_the_tree_is_materialised_for_the_scanner() -> None:
 
     class Recorder:
         def run(
-            self, argv: tuple[str, ...], cwd: Path, timeout_seconds: int
+            self,
+            argv: tuple[str, ...],
+            cwd: Path,
+            timeout_seconds: int,
+            env: Mapping[str, str] | None = None,
         ) -> CommandOutcome:
             seen["files"] = sorted(str(p.relative_to(cwd)) for p in cwd.rglob("*.yaml"))
             return CommandOutcome(exit_code=0, stdout="")
@@ -133,6 +145,39 @@ def test_types_and_exclusions_are_omitted_when_unset() -> None:
     assert "--type" not in runner.argv
     assert "--exclude-severities" not in runner.argv
     assert "--exclude-queries" not in runner.argv
+
+
+def test_kics_is_kept_offline() -> None:
+    """KICS calls home three ways by default; none of them reach a verdict, and
+    a blocked one costs every scan a timeout (PLAT-1195)."""
+    runner = StubRunner(report=_report())
+    _checker(runner).run(DIGEST, TREE, _noop)
+    assert "--disable-full-descriptions" in runner.argv
+    assert runner.env == {
+        "KICS_DESCRIPTIONS_ENDPOINT": "disabled:",
+        "DISABLE_CRASH_REPORT": "0",
+    }
+
+
+def test_full_descriptions_would_change_no_finding() -> None:
+    """They only ever filled cis_* fields, so findings remembered from scans that
+    tried to fetch them are still the findings a scan without them produces."""
+    hydrated = HIGH | {
+        "cis_description_id": "Security - CIS Kubernetes v1.8 - Rule 5.2.6",
+        "cis_description_id_raw": "5.2.6",
+        "cis_description_title": "Minimize the admission of root containers",
+        "cis_description_text": "Do not generally permit containers to run as root.",
+        "cis_description_text_raw": "Do not generally permit containers to run as root.",
+        "cis_description_rationale": "Containers may run as any Linux user.",
+        "cis_benchmark_name": "CIS Kubernetes",
+        "cis_benchmark_version": "1.8",
+    }
+    plain = _checker(StubRunner(exit_code=50, report=_report([HIGH])))
+    full = _checker(StubRunner(exit_code=50, report=_report([hydrated])))
+    verdict = full.run(DIGEST, TREE, _noop)
+    assert verdict == plain.run(DIGEST, TREE, _noop)
+    assert not verdict.passed
+    assert verdict.findings[0].message == "container runs as root"
 
 
 def test_a_clean_scan_passes() -> None:
@@ -367,6 +412,15 @@ def test_the_command_runs_without_a_shell() -> None:
     assert outcome.stdout.strip() == "$HOME; ls"
 
 
+def test_a_command_gets_its_env_on_top_of_this_services() -> None:
+    def printenv(name: str) -> str:
+        argv = ("printenv", name)
+        return SubprocessRunner().run(argv, Path.cwd(), 10, {"MV_ADDED": "1"}).stdout
+
+    assert printenv("MV_ADDED") == "1\n"
+    assert printenv("PATH") == os.environ["PATH"] + "\n"
+
+
 class FlagsEveryFile:
     """Reports one finding per file it was given, as KICS would per-file."""
 
@@ -374,7 +428,11 @@ class FlagsEveryFile:
         self.scanned: list[list[str]] = []
 
     def run(
-        self, argv: tuple[str, ...], cwd: Path, timeout_seconds: int
+        self,
+        argv: tuple[str, ...],
+        cwd: Path,
+        timeout_seconds: int,
+        env: Mapping[str, str] | None = None,
     ) -> CommandOutcome:
         files = sorted(str(p.relative_to(cwd)) for p in cwd.rglob("*") if p.is_file())
         self.scanned.append(files)

@@ -52,7 +52,9 @@ need a `system` PR, a regeneration, an Argo sync and a pod restart.
   and output wiring are constants here because they ship with the image, and
   config that could move them could point the scan at a query set inside the
   tree being scanned. The tool runs with this service's privileges: acceptable
-  only while every tool is offline and unauthenticated, as KICS is.
+  only while every tool is offline and unauthenticated, as KICS is because
+  `OFFLINE_ENV` and `--disable-full-descriptions` switch off its kics.io and
+  Sentry calls.
 - `scan_cache.py` — `FileScanCache`, which remembers a `Scanner`'s findings per
   file (scanner identity, path and content) and scans only what changed.
   Tool-agnostic; valid only for a scanner whose findings for a file depend on
