@@ -164,6 +164,14 @@ Four kinds, all behind one `Checker` seam:
   `tool_version` is read from the report KICS wrote, so a verdict cannot name a
   version that did not produce it.
 
+  KICS runs offline. Left to itself it calls kics.io twice per scan, for CIS
+  text to put in the report's `cis_*` fields and to ask whether a newer release
+  exists, and reports query errors to Checkmarx's Sentry. None of that reaches a
+  verdict, and behind this service's egress policy each blocked call cost a scan
+  a 20-second timeout. `--disable-full-descriptions` stops only the first, so
+  `OFFLINE_ENV` in `kics.py` also points the endpoint at a scheme that fails
+  before any socket opens and turns crash reports off.
+
   KICS only scans files that changed since it last saw them. Its findings are
   remembered per file, keyed on path and content, and a tree that differs by
   one file costs a scan of one file. This relies on every query judging a file
@@ -308,7 +316,8 @@ private index `https://repo.noa.re/`.
   finding.
 
 - **A scanner runs with this service's privileges.** That is only acceptable
-  while every tool is offline and unauthenticated, as KICS is. A tool that needs
+  while every tool is offline and unauthenticated, as KICS is once `OFFLINE_ENV`
+  turns off its calls home. A tool that needs
   egress or a credential — `wizcli` — must not simply be added as another
   `command`; it wants the per-check isolation that Jobs gave, and `git log` has
   that implementation. `image-exists` is not such a tool: it is this service's

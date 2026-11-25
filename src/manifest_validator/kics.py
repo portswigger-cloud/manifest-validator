@@ -8,6 +8,7 @@ import logging
 import tempfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from manifest_validator.checks import ProgressSink
@@ -32,8 +33,26 @@ LIBRARIES_PATH = "/opt/kics/assets/libraries"
 
 REPORT_NAME = "results.json"
 
+# KICS calls home three ways by default, and the validator uses none of them:
+# CIS text for the report's cis_* fields, which nothing here reads (skipped by
+# --disable-full-descriptions); a check for a newer release, which only prints a
+# line, and which that flag does not skip; and Sentry crash reports to
+# Checkmarx. An endpoint with a scheme Go's HTTP client does not speak fails
+# before any socket opens, and "0" is what turns crash reports off. Without
+# these, a blocked egress costs every scan two 20-second timeouts, and an open
+# one sends our paths and flags to a third party from a process holding this
+# service's credentials.
+OFFLINE_ENV = MappingProxyType(
+    {
+        "KICS_DESCRIPTIONS_ENDPOINT": "disabled:",
+        "DISABLE_CRASH_REPORT": "0",
+    }
+)
+
 # Part of every remembered result's key: change it whenever KicsScanner.encode
 # does, so results written in the old shape are never read in the new one.
+# OFFLINE_ENV did not need it: full descriptions only ever filled cis_* fields,
+# which encode never kept.
 RESULT_ENCODING = "kics-result-v3"
 
 # KICS gives each query a page of its own, by platform and, for Crossplane, by
@@ -123,7 +142,7 @@ class KicsScanner:
             output_dir.mkdir()
             write_tree(tree, tree_dir)
             outcome = self.runner.run(
-                self._argv(output_dir), tree_dir, self.timeout_seconds
+                self._argv(output_dir), tree_dir, self.timeout_seconds, OFFLINE_ENV
             )
             report = _read_report(output_dir / REPORT_NAME)
         version = _version(report)
@@ -158,6 +177,7 @@ class KicsScanner:
             "--output-path",
             str(output_dir),
             "--ci",
+            "--disable-full-descriptions",
         ]
         if self.types:
             argv += ["--type", ",".join(self.types)]

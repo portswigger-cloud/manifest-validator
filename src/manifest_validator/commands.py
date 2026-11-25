@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -22,8 +24,14 @@ class CommandOutcome:
 
 class CommandRunner(Protocol):
     def run(
-        self, argv: tuple[str, ...], cwd: Path, timeout_seconds: int
-    ) -> CommandOutcome: ...
+        self,
+        argv: tuple[str, ...],
+        cwd: Path,
+        timeout_seconds: int,
+        env: Mapping[str, str] | None = None,
+    ) -> CommandOutcome:
+        """`env` is added to this service's environment, not a replacement for it."""
+        ...
 
 
 class SubprocessRunner:
@@ -31,12 +39,17 @@ class SubprocessRunner:
     while every tool is offline and unauthenticated."""
 
     def run(
-        self, argv: tuple[str, ...], cwd: Path, timeout_seconds: int
+        self,
+        argv: tuple[str, ...],
+        cwd: Path,
+        timeout_seconds: int,
+        env: Mapping[str, str] | None = None,
     ) -> CommandOutcome:
         try:
             completed = subprocess.run(  # noqa: S603
                 argv,
                 cwd=cwd,
+                env={**os.environ, **env} if env else None,
                 capture_output=True,
                 text=True,
                 timeout=timeout_seconds,
